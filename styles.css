@@ -239,6 +239,21 @@ button.recruit-row:hover > span:last-child { color: var(--accent); }
 .recruit-detail dt { font-weight: 700; color: var(--muted); font-size: 13px; line-height: 21px; }
 .recruit-detail dd { margin: 0; line-height: 1.5; }
 .recruit-detail .warn { color: var(--warn); }
+.sup-list { display: grid; gap: 2px; }
+.sup-row { display: flex; align-items: center; gap: 6px; width: 100%; padding: 5px 8px; border-radius: 8px; text-align: left; font-size: 14px; color: var(--muted); }
+.sup-row:hover { background: var(--surface-2); }
+.sup-row.on { color: var(--text); background: var(--accent-soft); }
+.sup-row .sup-name { flex: 1; min-width: 0; font-weight: 650; }
+.sup-rank { font-size: 12.5px; font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sup-end { font-size: 11.5px; font-weight: 700; padding: 1px 6px; border-radius: 5px; background: var(--surface-3); color: var(--text-2); white-space: nowrap; }
+.sup-end.confirmed { background: var(--accent); color: var(--on-accent); }
+.sup-end.s { background: var(--warn-soft); color: var(--warn); }
+.pair-list { display: grid; gap: 2px; }
+.pair-row { display: flex; align-items: center; gap: 6px; padding: 5px 0; border-top: 1px solid var(--line); font-size: 14px; }
+.pair-row:first-child { border-top: 0; }
+.pair-names { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; font-weight: 650; }
+.pair-names i { font-style: normal; color: var(--muted); font-weight: 400; }
+.pair-names button:hover { color: var(--accent); }
 .gifts { margin-top: 10px; font-size: 14px; color: var(--text-2); }
 .gifts b { color: var(--text); margin-right: 4px; }
 
