@@ -6,6 +6,18 @@
   const MOVEMENTS = ['보병','기병','비행','중장'];
   const clone = x => JSON.parse(JSON.stringify(x));
   const blankBuild = id => ({characterId:id,roleLabel:'',roles:[],primary:'',secondary:'',movement:'',finalClass:'',path:'',notes:''});
+  // Missing weapon data is unknown, not an empty equipment allowance.
+  function classWeapons(job) {
+    const known=WEAPONS.filter(w=>job?.weapons?.includes(w));
+    return known.length?known:[...WEAPONS];
+  }
+  function applyClass(build,job) {
+    build.finalClass=job?.id||'';
+    build.movement=MOVEMENTS.includes(job?.movementType)?job.movementType:'';
+    const allowed=classWeapons(job),cleared=[];
+    for(const field of ['primary','secondary'])if(build[field]&&!allowed.includes(build[field])){cleared.push(build[field]);build[field]='';}
+    return cleared;
+  }
   function initial(data) {
     return {schemaVersion:1,dataVersion:data.version,updatedAt:null,settings:{theme:'light',spoilers:false},routes:Object.fromEntries(data.routes.map(r=>[r.id,r.initial.map(blankBuild)])),characterTags:{}};
   }
@@ -74,7 +86,7 @@
     clean.updatedAt=typeof raw.updatedAt==='string'?raw.updatedAt:null;
     return clean;
   }
-  const API={STATS,ROLES,WEAPONS,MOVEMENTS,clone,blankBuild,initial,visible,growthTags,synergyTags,tags,buildRoles,analyze,validateState};
+  const API={STATS,ROLES,WEAPONS,MOVEMENTS,clone,blankBuild,classWeapons,applyClass,initial,visible,growthTags,synergyTags,tags,buildRoles,analyze,validateState};
   root.PlannerCore=API;
   if(typeof module!=='undefined')module.exports=API;
 })(globalThis);

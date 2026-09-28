@@ -12,3 +12,8 @@ dialog{padding:0;color:var(--ink);background:var(--panel);border:1px solid var(-
 @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 @media(max-width:720px){.compare-grid{grid-template-columns:1fr!important}.route-emblem{display:none}.route-tab strong{white-space:nowrap}.route-tab{gap:6px}.route-tab .count{margin-left:0}.toast{width:max-content;max-width:calc(100vw - 24px)}}
 .toast button{background:transparent;color:inherit;border-color:currentColor;font-size:11px;margin-left:8px;padding:4px 8px}
+.class-picker{display:grid;gap:8px;margin:12px 0 24px}
+.class-picker-row{display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid var(--line);padding:10px 0}
+.class-picker-row>div:first-child{min-width:0}
+.class-picker-row small{display:block;font-size:12px;line-height:1.6;margin-top:4px}
+.class-picker-row .inline-actions{flex-shrink:0;flex-wrap:nowrap}
