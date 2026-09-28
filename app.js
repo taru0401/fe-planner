@@ -32,6 +32,12 @@ for (const [a, b, stages, max, end] of globalThis.FE_SUPPORTS || []) {
   }
 }
 const RANK_ORDER = { S: 4, A: 3, B: 2, C: 1 };
+// Mounts exist only on the Kai route and in part 3. Chariot riders get double the growth bonus.
+const MOUNT_DATA = { mounts: [], classFamily: {}, ...globalThis.FE_MOUNTS };
+const MOUNTS = new Map(MOUNT_DATA.mounts.map(m => [m.id, m]));
+const MOUNT_ROUTE = 'kai';
+const FAMILY_ORDER = ['말', '오르니우스', '천마', '비룡', '코끼리'];
+const CHARIOT = D.classes.find(j => j.name === '전차병')?.id;
 const END_LABEL = { confirmed: '페어엔딩 확인', candidate: 'A 지원', pending: '단계 미확인', s: 'S 지원' };
 // Side-story leads cannot be recruited in parts 1-2 but join in part 3; they are known, not spoilers.
 for (const [id, text] of Object.entries(RECRUIT.part3)) if (chars.has(id)) chars.get(id).sideStory = text;
@@ -63,6 +69,7 @@ const I = {
   bars: svg('<path d="M5 20v-8M12 20V5M19 20v-12"/>'),
   grid: svg('<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>'),
   pencil: svg('<path d="M4 20h4L19 9l-4-4L4 16Z"/><path d="m13.5 6.5 4 4"/>'),
+  horse: svg('<path d="M7 4v7a5 5 0 0 0 10 0V4"/><path d="M5 4h4M15 4h4"/>'),
   calendar: svg('<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>'),
   star: svg('<path d="m12 3.6 2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.2-4.1 5.8-.8Z"/>')
 };
@@ -211,6 +218,38 @@ function dupes(a) {
   for (const [k, n] of Object.entries(a.weapons)) if (n >= DUP.weapon) out.push({ label: k, n });
   return out;
 }
+
+/* ---------- mounts ---------- */
+const familyOf = jobId => MOUNT_DATA.classFamily[jobId] || '';
+const mountsApply = r => r === MOUNT_ROUTE || isP3(r);
+function classesOf(b, r) {
+  if (isP3(r)) return b.finalClass ? [b.finalClass] : [];
+  const ids = (b.path || '').split(/→|->|>|＞|,/).map(n => D.classes.find(x => x.name.replace(/\s/g, '') === n.trim().replace(/\s/g, ''))?.id).filter(Boolean);
+  if (b.finalClass) ids.push(b.finalClass);
+  return [...new Set(ids)];
+}
+// Mount families a build needs, from its transfer path and final class: family -> class ids.
+function mountSlots(b, r) {
+  const slots = new Map();
+  if (!b || !mountsApply(r)) return slots;
+  for (const id of classesOf(b, r)) {
+    const fam = familyOf(id);
+    if (!fam) continue;
+    if (!slots.has(fam)) slots.set(fam, []);
+    slots.get(fam).push(id);
+  }
+  return slots;
+}
+const ownMount = (charId, fam) => MOUNT_DATA.mounts.find(m => m.with === charId && m.family === fam)?.id || '';
+// Explicit choice, else (3부) the Kai route's choice, else the character's own unique mount.
+function mountFor(r, charId, fam) {
+  const chosen = getBuild(r, charId)?.mounts?.[fam];
+  if (chosen !== undefined) return { id: MOUNTS.has(chosen) ? chosen : '', source: chosen ? 'own' : 'none' };
+  if (isP3(r)) { const k = mountFor(MOUNT_ROUTE, charId, fam); if (k.id) return { id: k.id, source: 'kai' }; }
+  const d = ownMount(charId, fam);
+  return { id: d, source: d ? 'default' : 'none' };
+}
+const growthText = (g, times = 1) => C.STATS.filter(([k]) => g[k]).map(([k, n]) => `${n} +${g[k] * times}`).join(' · ');
 
 /* ---------- persistence ---------- */
 let saveTimer = 0;
@@ -557,6 +596,7 @@ function renderView() {
   $('#planner').hidden = !planner;
   $('#overview').hidden = ui.view !== 'overview';
   $('#schedule').hidden = ui.view !== 'schedule';
+  $('#mounts').hidden = ui.view !== 'mounts';
   $('#planner').dataset.pane = ui.pane;
   document.body.dataset.view = ui.view;
   $$('[data-act="view"]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === ui.view)));
@@ -855,6 +895,64 @@ function renderSchedule() {
     </div>`;
 }
 
+/* ---------- render: mounts ---------- */
+// Every (character, family) slot with a mount counts once, intermediate classes included.
+function mountUsage(r) {
+  const use = new Map(), missing = [];
+  for (const b of shown(r)) {
+    const c = chars.get(b.characterId);
+    for (const [fam, ids] of mountSlots(b, r)) {
+      const m = mountFor(r, c.id, fam);
+      if (!m.id) { missing.push({ c, fam, ids }); continue; }
+      if (!use.has(m.id)) use.set(m.id, []);
+      use.get(m.id).push({ c, ids, source: m.source });
+    }
+  }
+  return { use, missing };
+}
+function usagePanel(title, r) {
+  const { use, missing } = mountUsage(r);
+  const rows = [...use].sort((a, b) => b[1].length - a[1].length);
+  const total = rows.reduce((n, [, v]) => n + v.length, 0);
+  const fresh = isP3(r) ? rows.reduce((n, [, v]) => n + v.filter(x => x.source !== 'kai').length, 0) : 0;
+  const who = x => `<button data-act="open" data-id="${x.c.id}" data-route="${r}">${e(x.c.name)}</button><small>${x.ids.map(id => esc(jobName(id))).join('·')}${x.source === 'kai' ? ' · 카이에서' : ''}</small>`;
+  return `<section class="panel mount-use"><h2>${title} <span class="count">${total}마리${isP3(r) ? ` · 새로 필요 ${fresh}` : ''}</span></h2>
+    ${rows.length ? rows.map(([id, list]) => { const m = MOUNTS.get(id); return `<div class="use-row"><div class="use-head"><b>${esc(m.name)}</b><span class="pill">${esc(m.family)}</span><span class="muted">${esc(m.food)}·${esc(m.taste)}</span><b class="use-n">×${list.length}</b></div><div class="use-who">${list.map(who).join('')}</div></div>`; }).join('') : '<p class="note">아직 지정한 탈것이 없습니다. 캐릭터 빌드에서 직업과 탈것을 고르세요.</p>'}
+    ${missing.length ? `<div class="use-missing"><b>탈것 미정 ${missing.length}칸</b>${missing.map(x => `<button data-act="open" data-id="${x.c.id}" data-tab="build">${e(x.c.name)} <small>${esc(x.fam)}</small></button>`).join('')}</div>` : ''}
+  </section>`;
+}
+function foodPanel() {
+  const need = new Map();
+  for (const r of [MOUNT_ROUTE, P3.id]) for (const [id, list] of mountUsage(r).use) {
+    const m = MOUNTS.get(id), key = `${m.food}·${m.taste}`;
+    if (!need.has(key)) need.set(key, { feed: new Set(), mounts: new Map() });
+    const x = need.get(key);
+    if (m.feed) x.feed.add(m.feed);
+    x.mounts.set(m.name, (x.mounts.get(m.name) || 0) + list.length);
+  }
+  return `<section class="panel"><h2>필요한 먹이</h2>${need.size ? [...need].map(([k, x]) => `<div class="use-row"><div class="use-head"><b>${esc(k)}</b><span class="muted">${x.feed.size ? esc([...x.feed].join(' / ')) : '한국어 품목명 미확인'}</span></div><div class="use-who">${[...x.mounts].map(([n, v]) => `<span>${esc(n)} ×${v}</span>`).join('')}</div></div>`).join('') : '<p class="note">탈것을 지정하면 먹이 종류가 모입니다.</p>'}</section>`;
+}
+function mountCard(m) {
+  const who = m.with ? chars.get(m.with) : null;
+  return `<article class="mount-card"><div class="mount-head"><b>${esc(m.name)}</b><span class="pill${m.part3 ? ' dup' : ''}">${esc(m.rarity)}</span></div>
+    <dl class="mount-dl">
+      <dt>성장률</dt><dd>${esc(growthText(m.growth))} <small class="muted">(전차병 ${esc(growthText(m.growth, 2))})</small></dd>
+      <dt>능력치</dt><dd>${esc(growthText(m.stats))}</dd>
+      <dt>먹이</dt><dd>${esc(m.food)} · ${esc(m.taste)}${m.feed ? ` — <b>${esc(m.feed)}</b>` : ''}${m.feedHow ? `<br><small>${esc(m.feedHow)}</small>` : ''}</dd>
+      <dt>입수</dt><dd>${who ? `${e(who.name)} 영입 시 함께 합류` : esc(m.where)}</dd>
+      <dt>스킬</dt><dd>${esc(m.skill)}</dd>
+      <dt>운용</dt><dd>${esc(m.use)}${m.note ? ` · <span class="muted">${esc(m.note)}</span>` : ''}</dd>
+    </dl></article>`;
+}
+function renderMounts() {
+  const fams = FAMILY_ORDER.map(f => [f, MOUNT_DATA.mounts.filter(m => m.family === f), Object.entries(MOUNT_DATA.classFamily).filter(([, x]) => x === f).map(([id]) => jobName(id))]);
+  $('#mounts').innerHTML = `<div class="sched-top"><div><h2>탈것</h2><p class="col-sub">카이 루트와 3부에서만 탈 수 있습니다. 수치는 우호 Lv.5 기준이고, 전차병은 성장률 보정을 2배로 받습니다.</p></div></div>
+    <div class="mount-layout">
+      <div>${usagePanel('카이 루트 부대', MOUNT_ROUTE)}${usagePanel('3부 명단', P3.id)}${foodPanel()}</div>
+      <div>${fams.map(([f, list, classes]) => `<section class="mount-fam"><h3>${esc(f)} <small>${esc(classes.join(' · '))}</small></h3><div class="mount-grid">${list.map(mountCard).join('')}</div></section>`).join('')}</div>
+    </div>`;
+}
+
 /* ---------- render: overview ---------- */
 function renderOverview() {
   const counts = Object.fromEntries(D.routes.map(r => [r.id, C.analyze(shown(r.id))]));
@@ -895,11 +993,11 @@ function renderOverview() {
 }
 
 /* ---------- drawer ---------- */
-function openDrawer(id, tab) {
+function openDrawer(id, tab, route) {
   if (!isVisible(id)) return;
   const wasOpen = !!ui.drawer;
   const same = ui.drawer?.id === id;
-  ui.drawer = { id, route: same ? ui.drawer.route : ui.route, tab: tab || (same ? ui.drawer.tab : 'info') };
+  ui.drawer = { id, route: routes.has(route) ? route : same ? ui.drawer.route : ui.route, tab: tab || (same ? ui.drawer.tab : 'info') };
   renderDrawer(!same);
   const el = $('#drawer');
   el.classList.add('open');
@@ -927,12 +1025,13 @@ function closeDrawer(fromHistory = false) {
 }
 addEventListener('popstate', () => { if (ui.drawer) closeDrawer(true); });
 
-function growthBlock(c, j) {
+function growthBlock(c, j, m) {
   const withJ = j && ui.withClass;
-  return `<div class="block"><div class="block-head"><h3>성장률</h3>${j ? `<label class="toggle"><input type="checkbox" id="with-class"${ui.withClass ? ' checked' : ''}>${esc(j.name)} 보정 포함</label>` : ''}</div>
+  const times = j && j.id === CHARIOT ? 2 : 1;
+  return `<div class="block"><div class="block-head"><h3>성장률</h3>${j ? `<label class="toggle"><input type="checkbox" id="with-class"${ui.withClass ? ' checked' : ''}>${esc(j.name)}${m ? ` + ${esc(m.name)}${times > 1 ? '(×2)' : ''}` : ''} 보정 포함</label>` : ''}</div>
     <div class="growth">${C.STATS.map(([k, n]) => {
       const base = c.growth[k];
-      const add = withJ ? (j.growth[k] || 0) : 0;
+      const add = withJ ? (j.growth[k] || 0) + (m ? (m.growth[k] || 0) * times : 0) : 0;
       const total = base == null ? null : base + add;
       const baseW = Math.max(0, Math.min(100, add < 0 ? total : base ?? 0));
       const addW = add > 0 ? Math.max(0, Math.min(100 - baseW, add)) : 0;
@@ -996,6 +1095,32 @@ function historyBlock(c) {
       return `<button class="history-row" data-act="drawer-route" data-route="${r.id}"><span class="route-label" style="--c:${r.color}"><i></i>${esc(r.name)}</span><b>${j ? esc(j.name) : '직업 미정'}</b><span>${e([b.roleLabel, ...w].filter(Boolean).join(' · '))}</span></button>`;
     }).join('')}</div>` : '<p class="note">1+2부 루트에 배정되지 않았습니다.</p>'}</div>`;
 }
+function mountField(c, b, r) {
+  const slots = mountSlots(b, r);
+  if (!slots.size) {
+    return `<div class="field"><span class="f-label">탈것</span><p class="hint">${b.finalClass || b.path ? '이 직업과 전직 경로에는 탈것이 필요 없습니다.' : '직업이나 전직 경로를 정하면 필요한 탈것 칸이 생깁니다.'}</p></div>`;
+  }
+  const finalFam = familyOf(b.finalClass);
+  const times = b.finalClass === CHARIOT ? 2 : 1;
+  const rows = [...slots].sort((x, y) => FAMILY_ORDER.indexOf(x[0]) - FAMILY_ORDER.indexOf(y[0])).map(([fam, ids]) => {
+    const cur = mountFor(r, c.id, fam);
+    const explicit = b.mounts?.[fam] !== undefined;
+    const auto = isP3(r) ? mountFor(MOUNT_ROUTE, c.id, fam).id || ownMount(c.id, fam) : ownMount(c.id, fam);
+    const autoLabel = isP3(r) ? '카이 루트와 같게' : '함께 합류한 탈것';
+    const opts = MOUNT_DATA.mounts.filter(m => m.family === fam && (isP3(r) || !m.part3));
+    const m = MOUNTS.get(cur.id);
+    return `<div class="mount-slot">
+      <label class="f-sub">${esc(fam)} <small>${ids.map(id => esc(jobName(id))).join(' · ')}${fam === finalFam ? ' · 성장률 반영' : ''}</small></label>
+      <select data-mount="${esc(fam)}">
+        ${auto ? `<option value="*"${!explicit ? ' selected' : ''}>${autoLabel} (${esc(MOUNTS.get(auto).name)})</option>` : ''}
+        <option value=""${explicit && !b.mounts[fam] || !explicit && !auto ? ' selected' : ''}>없음</option>
+        ${opts.map(o => `<option value="${o.id}"${explicit && b.mounts[fam] === o.id ? ' selected' : ''}>${esc(o.name)} · ${esc(o.rarity)}</option>`).join('')}
+      </select>
+      ${m ? `<p class="hint">${esc(growthText(m.growth, fam === finalFam ? times : 1))}${fam === finalFam && times > 1 ? ' (전차병 2배)' : ''} · ${esc(m.food)}·${esc(m.taste)}</p>` : ''}
+    </div>`;
+  }).join('');
+  return `<div class="field"><span class="f-label">탈것 <small>우호 Lv.5 기준</small></span>${rows}</div>`;
+}
 function buildBlock(c, d) {
   const r = routes.get(d.route);
   const p3 = isP3(r.id);
@@ -1028,6 +1153,7 @@ function buildBlock(c, d) {
     <div class="field"><span class="f-label">주무기${j && !j.weapons.length ? ' <small>무기 자료가 없어 전체 표시</small>' : ''}</span>${weaponChips(b, 'primary', allowed)}</div>
     <div class="field"><span class="f-label">보조무기</span>${weaponChips(b, 'secondary', allowed)}</div>
     <div class="field"><span class="f-label">이동 타입</span><div class="chips">${C.MOVEMENTS.map(x => `<button class="chip" data-act="movement" data-move="${x}" aria-pressed="${b.movement === x}">${x}</button>`).join('')}</div></div>
+    ${mountsApply(r.id) ? mountField(c, b, r.id) : ''}
     ${p3 ? '' : `<div class="field"><span class="f-label">중간 전직 경로</span>
       <div class="path-row"><input type="text" data-bfield="path" value="${esc(b.path)}" maxlength="3000" placeholder="병사 → 기갑 타조병 → 가디언"><button class="btn" data-act="pick-class" data-mode="path">${I.plus}병종</button></div>
       <div class="path-chips" id="path-chips">${pathChips(b.path)}</div></div>`}
@@ -1047,6 +1173,8 @@ function renderDrawer(resetScroll = false) {
   const oldBody = $('#drawer .drawer-body');
   const scroll = resetScroll || !oldBody ? 0 : oldBody.scrollTop;
   const j = jobs.get(getBuild(d.route, c.id)?.finalClass);
+  const fam = j && mountsApply(d.route) ? familyOf(j.id) : '';
+  const mount = fam ? MOUNTS.get(mountFor(d.route, c.id, fam).id) : null;
   const cmp = ui.compare.includes(c.id);
   $('#drawer').innerHTML = `
     <header class="drawer-head">
@@ -1064,7 +1192,7 @@ function renderDrawer(resetScroll = false) {
     </nav>
     <div class="drawer-body" data-tab="${d.tab}">
       <section class="d-info">
-        ${growthBlock(c, j)}
+        ${growthBlock(c, j, mount)}
         <div class="block"><h3>특기 · 약점</h3>
           <div class="apt"><span class="apt-label">특기</span><div class="chips">${(c.strengths || []).map(x => `<span class="pill">${esc(x)}</span>`).join('') || '<span class="note">자료 없음</span>'}</div></div>
           <div class="apt"><span class="apt-label weak">약점</span><div class="chips">${(c.weaknesses || []).map(x => `<span class="pill weak-pill">${esc(x)}</span>`).join('') || '<span class="note">자료 없음</span>'}</div></div>
@@ -1304,7 +1432,7 @@ const A = {
   route(d) { ui.route = d.route; if (ui.view === 'overview') ui.view = 'planner'; saveUi(); if (ui.drawer) ui.drawer.route = d.route; render(); },
   view(d) { ui.view = d.view; render(); scrollTo(0, 0); },
   pane(d) {
-    if (d.pane === 'overview' || d.pane === 'schedule') ui.view = d.pane;
+    if (['overview', 'schedule', 'mounts'].includes(d.pane)) ui.view = d.pane;
     else { ui.view = 'planner'; ui.pane = d.pane; }
     render();
     scrollTo(0, 0);
@@ -1312,7 +1440,7 @@ const A = {
   theme() { state.settings.theme = state.settings.theme === 'dark' ? 'light' : 'dark'; persist(); applyTheme(); },
   'set-theme'(d) { state.settings.theme = d.mode; persist(); applyTheme(); renderModal(); },
   settings() { openModal({ kind: 'settings' }); },
-  open(d) { openDrawer(d.id, d.tab); },
+  open(d) { openDrawer(d.id, d.tab, d.route); },
   'close-drawer'() { closeDrawer(); },
   'drawer-tab'(d) { ui.drawer.tab = d.tab; renderDrawer(true); },
   'drawer-route'(d) { ui.drawer.route = d.route; ui.drawer.tab = 'build'; renderDrawer(); },
@@ -1474,6 +1602,16 @@ document.addEventListener('change', ev => {
   if (t.id === 'sort') { ui.sort = t.value; saveUi(); renderList(); return; }
   if (t.id === 'with-class') { ui.withClass = t.checked; saveUi(); renderDrawer(); return; }
   if (t.id === 'p3-final') { setFinal(ui.drawer.id, t.checked); return; }
+  if (t.dataset.mount !== undefined) {
+    const b = drawerBuild();
+    if (!b) return;
+    b.mounts = { ...b.mounts };
+    if (t.value === '*') delete b.mounts[t.dataset.mount];
+    else b.mounts[t.dataset.mount] = t.value;
+    persist();
+    render();
+    return;
+  }
   if (t.id === 'spoiler-toggle') {
     if (t.checked) {
       t.checked = false;
@@ -1605,6 +1743,7 @@ function render() {
   renderStats();
   if (ui.view === 'overview') renderOverview();
   if (ui.view === 'schedule') renderSchedule();
+  if (ui.view === 'mounts') renderMounts();
   renderDrawer();
   if (ui.modal && ['compare', 'settings', 'class'].includes(ui.modal.kind)) renderModal();
 }

@@ -257,6 +257,31 @@ button.recruit-row:hover > span:last-child { color: var(--accent); }
 .gifts { margin-top: 10px; font-size: 14px; color: var(--text-2); }
 .gifts b { color: var(--text); margin-right: 4px; }
 
+/* mounts */
+.mount-slot + .mount-slot { margin-top: 10px; }
+.f-sub { display: block; font-size: 13px; font-weight: 700; margin-bottom: 4px; }
+.f-sub small { font-weight: 500; color: var(--muted); }
+.mount-layout { display: grid; grid-template-columns: 380px minmax(0, 1fr); gap: 16px; align-items: start; }
+.mount-use .use-row, .panel .use-row { padding: 8px 0; border-top: 1px solid var(--line); }
+.use-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.use-head .use-n { margin-left: auto; font-size: 16px; }
+.use-who { display: flex; flex-wrap: wrap; gap: 2px 10px; margin-top: 3px; font-size: 13.5px; }
+.use-who button { font-weight: 650; }
+.use-who button:hover { color: var(--accent); }
+.use-who small { color: var(--muted); margin-left: 3px; }
+.use-missing { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; margin-top: 10px; padding: 8px 10px; border-radius: 9px; background: var(--warn-soft); color: var(--warn); font-size: 13.5px; }
+.use-missing button { color: var(--text); font-weight: 650; }
+.mount-fam + .mount-fam { margin-top: 18px; }
+.mount-fam h3 { font-size: 15px; font-weight: 800; margin: 0 2px 8px; }
+.mount-fam h3 small { font-size: 12.5px; font-weight: 550; color: var(--muted); margin-left: 6px; }
+.mount-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 8px; }
+.mount-card { padding: 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); }
+.mount-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.mount-head b { font-size: 15.5px; }
+.mount-dl { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 4px 8px; margin: 0; font-size: 13.5px; line-height: 1.5; }
+.mount-dl dt { font-weight: 700; color: var(--muted); font-size: 12.5px; }
+.mount-dl dd { margin: 0; }
+
 /* recruitment schedule */
 .schedule { max-width: 1280px; margin: 0 auto; padding: 22px 24px 64px; }
 .sched-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
@@ -702,11 +727,14 @@ em.late { font-style: normal; font-size: 11.5px; font-weight: 700; color: var(--
   .scrim.show { opacity: 1; pointer-events: auto; }
 }
 @media (max-width: 1100px) and (min-width: 760px) {
+  .mount-layout { grid-template-columns: minmax(0, 1fr); }
   .sched-layout { grid-template-columns: minmax(0, 1fr); }
   .prep { position: static; }
   .ov-cards { grid-template-columns: repeat(3, 1fr); }
   .brand span { display: none; }
-  .route-tab { padding: 0 12px; }
+  .topbar { flex-wrap: wrap; gap: 6px 12px; padding: 8px 16px; }
+  .top-actions { margin-left: auto; }
+  .route-tabs { order: 3; width: 100%; margin: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
 }
 
 /* ---------- mobile ---------- */
@@ -759,7 +787,7 @@ em.late { font-style: normal; font-size: 11.5px; font-weight: 700; color: var(--
 
   .bottom-nav {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 25;
-    display: grid; grid-template-columns: repeat(5, 1fr);
+    display: grid; grid-template-columns: repeat(6, 1fr);
     padding-bottom: env(safe-area-inset-bottom);
     background: var(--surface);
     border-top: 1px solid var(--line);
@@ -782,11 +810,13 @@ em.late { font-style: normal; font-size: 11.5px; font-weight: 700; color: var(--
 
   .overview { padding: 14px 12px 24px; }
   .schedule { padding: 14px 12px 24px; }
+  .mount-layout { grid-template-columns: minmax(0, 1fr); }
+  .mount-grid { grid-template-columns: minmax(0, 1fr); }
   .sched-layout { grid-template-columns: minmax(0, 1fr); }
   .prep { position: static; }
   .sched-grid { grid-template-columns: minmax(0, 1fr); }
-  .bottom-nav { grid-template-columns: repeat(5, 1fr); }
-  .bottom-nav button { font-size: 11.5px; }
+  .bottom-nav { grid-template-columns: repeat(6, 1fr); }
+  .bottom-nav button { font-size: 11px; }
   .ov-cards { grid-template-columns: repeat(2, 1fr); gap: 8px; }
   .ov-card { padding: 14px; }
   .ov-card .big { font-size: 28px; }
