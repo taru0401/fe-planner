@@ -21,9 +21,11 @@ const LATE_CLASSES = new Set(['배틀 몽크', '소드 마스터', '그레이트
 const STAT_KEYS = C.STATS.map(([k]) => k);
 const PROFS = ['검', '창', '도끼', '활', '격투', '흑마법', '백마법', '기마', '비행', '중장', '보병', '지휘'];
 const QUICK = ['물리', '마법', '활', '기병', '비행', '중장', '힐러'];
-const AUTO_TAGS = ['고속 물리', '물리 딜탱', '마법 딜러', '마법탱', '하이브리드', '고기술/필살형', '지원형', '기병 시너지', '비행 시너지', '활 시너지', '필살', '추격', '회복', '전열 지원', '마법 시너지'];
+const RECRUIT = globalThis.FE_RECRUIT || {};
+// Side-story leads cannot be recruited in parts 1-2 but join in part 3; they are known, not spoilers.
+for (const [id, r] of Object.entries(RECRUIT)) if (r.part3 && chars.has(id)) chars.get(id).sideStory = r.part3;
 const TIERS = [...new Map(D.classes.map(j => [j.rank, j.tier]))].sort((a, b) => a[0] - b[0]);
-const SORTS = [['default', '기본'], ['name', '이름'], ...C.STATS.map(([k, n]) => [k, `${n} 높은 순`])];
+const SORTS = [['default', '기본'], ['fame', '필요 명성 순'], ['name', '이름'], ...C.STATS.map(([k, n]) => [k, `${n} 높은 순`])];
 // A count at or above these marks is highlighted as overlap. It is a fact, not a verdict.
 const DUP = { role: 4, weapon: 4, job: 2 };
 
@@ -68,18 +70,19 @@ if (!hadSaved && matchMedia('(prefers-color-scheme: dark)').matches) state.setti
 const ui = {
   route: 'dietrich', view: 'planner', pane: 'squad', sort: 'default',
   filtersOpen: false, compare: [], undo: null,
-  drawer: null, withClass: true, tagEdit: false, modal: null, pendingImport: null, p3scope: 'all'
+  drawer: null, withClass: true, recruitOnly: true, modal: null, pendingImport: null, p3scope: 'all'
 };
 try {
   const saved = JSON.parse(localStorage.getItem(UI_KEY) || '{}');
   if (routes.has(saved.route)) ui.route = saved.route;
   if (SORTS.some(([k]) => k === saved.sort)) ui.sort = saved.sort;
   if (typeof saved.withClass === 'boolean') ui.withClass = saved.withClass;
+  if (typeof saved.recruitOnly === 'boolean') ui.recruitOnly = saved.recruitOnly;
 } catch { /* ignore */ }
-const saveUi = () => { try { localStorage.setItem(UI_KEY, JSON.stringify({ route: ui.route, sort: ui.sort, withClass: ui.withClass })); } catch { /* ignore */ } };
+const saveUi = () => { try { localStorage.setItem(UI_KEY, JSON.stringify({ route: ui.route, sort: ui.sort, withClass: ui.withClass, recruitOnly: ui.recruitOnly })); } catch { /* ignore */ } };
 
-const f = { q: '', assign: 'all', route: '', quick: '', role: '', job: '', strength: '', weakness: '', tag: '' };
-const PANEL_FILTERS = ['route', 'role', 'job', 'strength', 'weakness', 'tag'];
+const f = { q: '', assign: 'all', route: '', quick: '', role: '', job: '', strength: '', weakness: '' };
+const PANEL_FILTERS = ['route', 'role', 'job', 'strength', 'weakness'];
 
 /* ---------- helpers ---------- */
 // Hidden characters' names must not leak through other characters' trait text.
@@ -160,6 +163,21 @@ function missingParts(b) {
   if (!b.movement) m.push('이동');
   if (!b.finalClass) m.push('최종직');
   return m;
+}
+// Recruitment on a route: ok = can join there; text = the condition shown in lists and details.
+function recruitOn(c, r) {
+  if (isP3(r)) {
+    if (c.sideStory) return { ok: true, text: `3부 합류 · ${c.sideStory}` };
+    const rs = assigned(c.id).map(x => x.name);
+    return { ok: true, text: rs.length ? `1+2부 ${rs.join(' · ')}` : '1+2부 미배정' };
+  }
+  const rec = RECRUIT[c.id];
+  if (!rec) return c.availablePart === 2 ? { ok: true, text: '2부 합류', fame: 0 } : { ok: false, text: '영입 정보 없음' };
+  const v = rec[r];
+  if (!v) return { ok: false, text: rec.part3 ? `3부 합류 · ${rec.part3}` : '영입 불가' };
+  const [fame, support] = v;
+  if (fame <= 1 && !support) return { ok: true, text: '처음부터 합류', fame: 0 };
+  return { ok: true, text: `명성 ${fame} · 지원 ${support}${rec.note ? ` · ${rec.note}` : ''}`, fame };
 }
 function dupes(a) {
   const out = [];
@@ -523,7 +541,6 @@ function renderView() {
 function matches(c) {
   const b = getBuild(ui.route, c.id);
   const rs = assigned(c.id);
-  const tags = C.tags(c, state);
   const g = c.growth;
   const skills = c.strengths || [], weak = c.weaknesses || [];
   const roles = C.buildRoles(b || C.blankBuild(c.id));
@@ -534,7 +551,7 @@ function matches(c) {
       const k = q.replace(/ /g, '');
       if (![c.name, ...c.aliases].some(n => cho(n).includes(k))) return false;
     } else {
-      const text = [c.name, ...c.aliases, ...tags, c.personal, c.unique, ...skills, ...weak, b?.roleLabel, jobName(b?.finalClass)].join(' ').toLowerCase();
+      const text = [c.name, ...c.aliases, c.personal, c.unique, ...skills, ...weak, b?.roleLabel, jobName(b?.finalClass)].join(' ').toLowerCase();
       if (!q.split(' ').every(w => text.includes(w))) return false;
     }
   }
@@ -546,7 +563,7 @@ function matches(c) {
   if (f.job && b?.finalClass !== f.job) return false;
   if (f.strength && !skills.includes(f.strength)) return false;
   if (f.weakness && !weak.includes(f.weakness)) return false;
-  if (f.tag && !tags.includes(f.tag)) return false;
+  if (ui.recruitOnly && !isP3(ui.route) && !b && !recruitOn(c, ui.route).ok) return false;
   switch (f.quick) {
     case '물리': return g.str >= 40 || roles.includes('물리딜');
     case '마법': return g.mg >= 40 || roles.includes('마법딜') || weapons.includes('흑마법');
@@ -560,6 +577,10 @@ function matches(c) {
 }
 function sortChars(list) {
   if (ui.sort === 'name') return [...list].sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+  if (ui.sort === 'fame' && !isP3(ui.route)) {
+    const fame = c => { const x = recruitOn(c, ui.route); return x.ok ? x.fame ?? 0 : 99; };
+    return [...list].sort((a, b) => fame(a) - fame(b));
+  }
   if (STAT_KEYS.includes(ui.sort)) return [...list].sort((a, b) => (b.growth[ui.sort] ?? -1) - (a.growth[ui.sort] ?? -1));
   return list;
 }
@@ -569,11 +590,11 @@ function routeDots(id) {
 }
 function charRow(c) {
   const inRoute = !!getBuild(ui.route, c.id);
-  const tags = C.tags(c, state);
+  const rec = recruitOn(c, ui.route);
   const cmp = ui.compare.includes(c.id);
   const stat = STAT_KEYS.includes(ui.sort) ? c.growth[ui.sort] : null;
   return `<li class="char-row${ui.drawer?.id === c.id ? ' active' : ''}" draggable="true" data-drag="${c.id}">
-    <button class="char-open" data-act="open" data-id="${c.id}">${avatar(c)}<span class="char-text"><span class="char-name">${e(c.name)}</span><span class="char-sub">${e(tags.slice(0, 3).join(' · ')) || '&nbsp;'}</span></span>${stat != null ? `<span class="stat-badge">${stat}</span>` : ''}</button>
+    <button class="char-open" data-act="open" data-id="${c.id}">${avatar(c)}<span class="char-text"><span class="char-name">${e(c.name)}</span><span class="char-sub${rec.ok ? '' : ' no'}" title="${e(rec.text)}">${e(rec.text)}</span></span>${stat != null ? `<span class="stat-badge">${stat}</span>` : ''}</button>
     ${routeDots(c.id)}
     <button class="icon-btn cmp" data-act="compare" data-id="${c.id}" aria-pressed="${cmp}" title="비교 후보" aria-label="${e(c.name)} 비교 후보">${I.compare}</button>
     <button class="add-btn${inRoute ? ' on' : ''}" data-act="${inRoute ? 'remove' : 'add'}" data-id="${c.id}" title="${esc(teamName(ui.route))}${inRoute ? '에서 제외' : '에 추가'}" aria-label="${e(c.name)} ${esc(teamName(ui.route))}${inRoute ? '에서 제외' : '에 추가'}">${inRoute ? I.check : I.plus}</button>
@@ -589,6 +610,11 @@ function renderList() {
   const active = PANEL_FILTERS.filter(k => f[k]).length;
   $('#filter-btn').innerHTML = `${svg('<path d="M4 6h16M7 12h10M10 18h4"/>')}필터${active ? `<b>${active}</b>` : ''}`;
   $('#filter-btn').setAttribute('aria-expanded', String(ui.filtersOpen));
+  const rt = $('#recruit-toggle');
+  rt.hidden = isP3(ui.route);
+  rt.setAttribute('aria-pressed', String(ui.recruitOnly));
+  rt.textContent = ui.recruitOnly ? '영입 가능만' : '전체 보기';
+  rt.title = ui.recruitOnly ? `${cur().name} 루트에서 영입할 수 없는 캐릭터도 보기` : '영입 가능한 캐릭터만 보기';
   $('#char-list').innerHTML = list.length
     ? list.map(charRow).join('')
     : '<li class="empty">조건에 맞는 캐릭터가 없습니다.<button class="btn sm" data-act="reset-filters">검색·필터 초기화</button></li>';
@@ -598,10 +624,8 @@ function renderFilterPanel() {
   const p = $('#filter-panel');
   p.hidden = !ui.filtersOpen;
   if (!ui.filtersOpen) return;
-  const allTags = [...new Set(visibleChars().flatMap(c => C.tags(c, state)))].sort((a, b) => a.localeCompare(b, 'ko'));
   p.innerHTML = `
     <label>배정 루트<select data-filter="route">${options(TABS.map(r => [r.id, r.name]), f.route, '전체')}</select></label>
-    <label>태그<select data-filter="tag">${options(allTags, f.tag, '전체')}</select></label>
     <label>특기<select data-filter="strength">${options(PROFS, f.strength, '전체')}</select></label>
     <label>약점<select data-filter="weakness">${options(PROFS, f.weakness, '전체')}</select></label>
     <label>역할 (${esc(cur().name)})<select data-filter="role">${options(C.ROLES, f.role, '전체')}</select></label>
@@ -775,7 +799,6 @@ function openDrawer(id, tab) {
   const wasOpen = !!ui.drawer;
   const same = ui.drawer?.id === id;
   ui.drawer = { id, route: same ? ui.drawer.route : ui.route, tab: tab || (same ? ui.drawer.tab : 'info') };
-  if (!same) ui.tagEdit = false;
   renderDrawer(!same);
   const el = $('#drawer');
   el.classList.add('open');
@@ -792,7 +815,6 @@ function closeDrawer(fromHistory = false) {
   if (!ui.drawer) return;
   const id = ui.drawer.id;
   ui.drawer = null;
-  ui.tagEdit = false;
   const el = $('#drawer');
   el.classList.remove('open');
   el.setAttribute('aria-hidden', 'true');
@@ -821,21 +843,11 @@ function traitBlock(label, text) {
   if (!t.length) return `<div class="trait none"><span class="trait-label">${label}</span>없음</div>`;
   return `<div class="trait"><span class="trait-label">${label}</span><dl>${t.map(x => `<dt>${esc(x.name)}</dt>${x.body ? `<dd>${esc(x.body)}</dd>` : ''}`).join('')}</dl></div>`;
 }
-function tagBlock(c) {
-  const tags = C.tags(c, state);
-  const custom = Object.hasOwn(state.characterTags, c.id);
-  if (!ui.tagEdit) {
-    return `<div class="block"><div class="block-head"><h3>태그${custom ? ' <small class="muted">직접 수정함</small>' : ''}</h3><button class="btn sm ghost" data-act="tag-edit">${I.pencil}수정</button></div>
-      <div class="chips">${tags.length ? tags.map(t => `<span class="tag">${e(t)}</span>`).join('') : '<span class="note">태그 없음</span>'}</div></div>`;
-  }
-  const suggestions = AUTO_TAGS.filter(t => !tags.includes(t));
-  return `<div class="block"><div class="block-head"><h3>태그 수정</h3><button class="btn sm primary" data-act="tag-edit">완료</button></div>
-    <div class="tag-edit">
-      <div class="chips">${tags.map(t => `<span class="tag">${e(t)}<button data-act="tag-remove" data-tag="${esc(t)}" aria-label="${esc(t)} 삭제">${I.x}</button></span>`).join('') || '<span class="note">태그 없음</span>'}</div>
-      <div class="row"><input type="text" id="tag-input" maxlength="80" placeholder="새 태그 입력 후 Enter"><button class="btn sm" data-act="tag-add">추가</button></div>
-      ${suggestions.length ? `<div class="chips">${suggestions.map(t => `<button class="tag add" data-act="tag-add" data-tag="${esc(t)}">+ ${esc(t)}</button>`).join('')}</div>` : ''}
-      ${custom ? '<div><button class="btn sm" data-act="tag-reset">자동 태그로 되돌리기</button></div>' : ''}
-    </div></div>`;
+function recruitBlock(c) {
+  return `<div class="block"><h3>영입 조건</h3><div class="recruit-list">${D.routes.map(r => {
+    const x = recruitOn(c, r.id);
+    return `<div class="recruit-row${x.ok ? '' : ' no'}"><span class="route-label" style="--c:${r.color}"><i></i>${esc(r.name)}</span><span>${e(x.text)}</span></div>`;
+  }).join('')}${c.sideStory ? `<div class="recruit-row"><span class="route-label" style="--c:${P3.color}"><i></i>3부</span><span>${e(c.sideStory)} 후 합류</span></div>` : ''}</div></div>`;
 }
 function pathChips(path) {
   return path.split(/→|->|>|＞|,/).map(s => s.trim()).filter(Boolean).map(n => {
@@ -909,14 +921,13 @@ function renderDrawer(resetScroll = false) {
   const oldBody = $('#drawer .drawer-body');
   const scroll = resetScroll || !oldBody ? 0 : oldBody.scrollTop;
   const j = jobs.get(getBuild(d.route, c.id)?.finalClass);
-  const tags = C.tags(c, state);
   const cmp = ui.compare.includes(c.id);
   $('#drawer').innerHTML = `
     <header class="drawer-head">
       ${avatar(c, 'lg')}
       <div class="dh-text">
         <h2 id="drawer-title">${e(c.name)}${c.aliases.length ? `<small>${e(c.aliases.join(', '))}</small>` : ''}</h2>
-        <div class="dh-tags">${tags.slice(0, 5).map(t => `<span class="tag">${e(t)}</span>`).join('')}</div>
+        <p class="dh-sub">${e(recruitOn(c, d.route).text)}</p>
       </div>
       <button class="icon-btn" data-act="compare" data-id="${c.id}" aria-pressed="${cmp}" title="${cmp ? '비교 후보에서 빼기' : '비교 후보에 추가'}" aria-label="비교 후보">${I.compare}</button>
       <button class="icon-btn" data-act="close-drawer" aria-label="닫기" title="닫기 (Esc)">${I.x}</button>
@@ -933,7 +944,7 @@ function renderDrawer(resetScroll = false) {
           <div class="apt"><span class="apt-label weak">약점</span><div class="chips">${(c.weaknesses || []).map(x => `<span class="pill weak-pill">${esc(x)}</span>`).join('') || '<span class="note">자료 없음</span>'}</div></div>
         </div>
         <div class="block"><h3>특성</h3>${traitBlock('개인', c.personal)}${traitBlock('유니크', c.unique)}</div>
-        ${tagBlock(c)}
+        ${recruitBlock(c)}
       </section>
       <section class="d-build">${buildBlock(c, d)}</section>
     </div>`;
@@ -1067,7 +1078,7 @@ function compareHtml() {
         ${C.STATS.map(([k, n]) => `<tr><th>${n}</th>${cs.map(c => `<td class="${cs.length > 1 && c.growth[k] === best(k) ? 'best' : ''}">${c.growth[k] ?? '—'}</td>`).join('')}</tr>`).join('')}
         ${text('특기', c => esc((c.strengths || []).join(' · ') || '—'))}
         ${text('약점', c => esc((c.weaknesses || []).join(' · ') || '—'))}
-        ${text('태그', c => e(C.tags(c, state).join(' · ') || '—'))}
+        ${text(`영입 (${esc(r.name)})`, c => e(recruitOn(c, r.id).text))}
         ${text('개인 특성', c => traitCell(c.personal))}
         ${text('유니크', c => traitCell(c.unique))}
         ${text('배정', c => esc(TABS.filter(x => getBuild(x.id, c.id)).map(x => x.name).join(' · ') || '미배정'))}
@@ -1103,18 +1114,18 @@ function settingsHtml() {
       ${syncSection()}
       <section class="set"><h3>스포일러 보호</h3>
         <label class="switch-row"><span>3부 이후 캐릭터도 표시</span><span class="switch"><input type="checkbox" id="spoiler-toggle"${state.settings.spoilers ? ' checked' : ''}><span></span></span></label>
-        <p>현재 ${count}명 표시 중. 끄면 1·2부에 합류하는 캐릭터만 보입니다.</p></section>
+        <p>현재 ${count}명 표시 중. 끄면 1·2부 동료와 1부 외전 주인공만 보입니다.</p></section>
       <section class="set"><h3>화면</h3>
         <div class="seg" role="group" aria-label="테마"><button data-act="set-theme" data-mode="light" aria-pressed="${!dark}">라이트</button><button data-act="set-theme" data-mode="dark" aria-pressed="${dark}">다크</button></div></section>
       <section class="set"><h3>백업 <small>${state.updatedAt ? `마지막 저장 ${esc(new Date(state.updatedAt).toLocaleString('ko-KR'))}` : ''}</small></h3>
-        <p>편성·빌드·메모·태그를 JSON 파일로 저장하고, 다른 기기에서 불러올 수 있습니다.</p>
+        <p>편성·빌드·3부 부대·메모를 JSON 파일로 저장하고, 다른 기기에서 불러올 수 있습니다.</p>
         <div class="row"><button class="btn primary" data-act="export">내보내기</button><button class="btn" data-act="import">불러오기</button>${corruptBackup ? '<button class="btn" data-act="export-corrupt">읽지 못한 원본 내보내기</button>' : ''}</div></section>
       <section class="set"><h3>초기화</h3>
-        <p>처음 받은 루트별 명단으로 되돌립니다. 빌드·메모·수정한 태그가 지워집니다.</p>
+        <p>처음 받은 루트별 명단으로 되돌립니다. 빌드·메모·3부 부대가 지워집니다.</p>
         <div class="row"><button class="btn danger" data-act="reset-ask">초기 편성으로 되돌리기</button></div></section>
       <section class="set"><h3>자료 출처 <small>${esc(D.version)} 기준</small></h3>
         <ul class="sources">
-          <li><a href="https://cass07.github.io/fe18-db/" target="_blank" rel="noopener noreferrer">cass07 만자천홍 DB</a><span>캐릭터·병종 성장률, 특성, 능력치 보정, 전직 조건, 마스터 스킬</span></li>
+          <li><a href="https://cass07.github.io/fe18-db/" target="_blank" rel="noopener noreferrer">cass07 만자천홍 DB</a><span>캐릭터·병종 성장률, 특성, 능력치 보정, 전직 조건, 마스터 스킬, 영입 조건</span></li>
           <li><a href="https://redfreshet.com/game-tools/fe-banshisenko/" target="_blank" rel="noopener noreferrer">redfreshet 공략 도구</a><span>특기·약점, 사용 무기, 이동 타입·이동력, 합류 시점</span></li>
           <li><a href="https://fefw.azaws.workers.dev/" target="_blank" rel="noopener noreferrer">만자천홍 육성 도감</a><span>1부 초상화</span></li>
         </ul></section>
@@ -1162,15 +1173,6 @@ function focusSearch() {
   s.focus();
   s.select();
 }
-function tagsOf(id) { return [...C.tags(chars.get(id), state)]; }
-function setTags(id, list) {
-  const clean = [...new Set(list.map(t => t.trim()).filter(Boolean))];
-  if (clean.length > 30 || clean.some(t => t.length > 80)) { toast('태그는 30개, 한 개당 80자까지입니다.'); return; }
-  state.characterTags[id] = clean;
-  persist();
-  render();
-}
-
 const A = {
   route(d) { ui.route = d.route; ui.view = 'planner'; saveUi(); if (ui.drawer) ui.drawer.route = d.route; render(); },
   view(d) { ui.view = d.view; render(); scrollTo(0, 0); },
@@ -1195,6 +1197,7 @@ const A = {
   'clear-compare'() { ui.compare = []; if (ui.modal?.kind === 'compare') closeModal(); renderList(); renderDrawer(); },
   assign(d) { f.assign = d.assign; renderList(); },
   quick(d) { f.quick = f.quick === d.quick ? '' : d.quick; renderList(); },
+  'recruit-only'() { ui.recruitOnly = !ui.recruitOnly; saveUi(); renderList(); },
   'toggle-filters'() { ui.filtersOpen = !ui.filtersOpen; renderFilterPanel(); renderList(); },
   'reset-filters'() {
     Object.keys(f).forEach(k => { f[k] = k === 'assign' ? 'all' : ''; });
@@ -1245,22 +1248,12 @@ const A = {
   pick(d) { if (ui.modal?.kind === 'picker' && ui.modal.mode === 'path') appendPath(d.job); else selectClass(d.job); },
   'clear-class'() { selectClass(''); },
   'class-info'(d, el) { openModal({ kind: 'class', job: d.job, fromDrawer: !!el.closest('#drawer') }); },
-  'tag-edit'() { ui.tagEdit = !ui.tagEdit; renderDrawer(); if (ui.tagEdit) $('#tag-input')?.focus(); },
-  'tag-remove'(d) { const id = ui.drawer.id; setTags(id, tagsOf(id).filter(t => t !== d.tag)); },
-  'tag-add'(d) {
-    const id = ui.drawer.id;
-    const value = d.tag || $('#tag-input')?.value || '';
-    if (!value.trim()) return;
-    setTags(id, [...tagsOf(id), value]);
-    $('#tag-input')?.focus();
-  },
-  'tag-reset'() { delete state.characterTags[ui.drawer.id]; persist(); render(); },
   export() { exportState(); },
   import() { $('#import-file').value = ''; $('#import-file').click(); },
   'export-corrupt'() { download(corruptBackup, '만자천홍-저장원본-복구용.json'); },
   'reset-ask'() {
     openModal({ kind: 'confirm', title: '초기 편성으로 되돌릴까요?', ok: '초기화', okAct: 'reset-apply', danger: true, cancelAct: 'settings',
-      body: '<p>빌드·메모·수정한 태그가 모두 지워지고 처음 명단으로 돌아갑니다.</p><p>필요하면 먼저 내보내기로 백업하세요.</p>' });
+      body: '<p>빌드·메모·3부 부대가 모두 지워지고 처음 명단으로 돌아갑니다.</p><p>필요하면 먼저 내보내기로 백업하세요.</p>' });
   },
   'reset-apply'() {
     snapshot();
@@ -1370,7 +1363,6 @@ document.addEventListener('change', ev => {
 document.addEventListener('keydown', ev => {
   const t = ev.target;
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName);
-  if (t.id === 'tag-input' && ev.key === 'Enter') { ev.preventDefault(); A['tag-add']({}); return; }
   if (t.id === 'sync-token' && ev.key === 'Enter') { ev.preventDefault(); A['sync-connect'](); return; }
   if (t.id === 'search' && ev.key === 'Escape' && t.value) { ev.preventDefault(); t.value = ''; f.q = ''; renderList(); return; }
   if (t.dataset?.handle && (ev.key === 'ArrowUp' || ev.key === 'ArrowDown')) {

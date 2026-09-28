@@ -29,25 +29,8 @@
   function initial(data) {
     return {schemaVersion:SCHEMA,dataVersion:data.version,updatedAt:null,settings:{theme:'light',spoilers:false},routes:Object.fromEntries(data.routes.map(r=>[r.id,r.initial.map(blankBuild)])),part3:[],characterTags:{}};
   }
-  function visible(c,state) { return !!(state.settings.spoilers || c.excelKnown || (c.availablePart && c.availablePart<=2)); }
-  function growthTags(c) {
-    const g=c.growth,t=[];
-    if(g.str>=35&&g.spd>=50)t.push('고속 물리');
-    if(g.str>=40&&g.def>=40)t.push('물리 딜탱');
-    if(g.mg>=45)t.push('마법 딜러');
-    if(g.res>=45)t.push('마법탱');
-    if(g.str>=35&&g.mg>=35)t.push('하이브리드');
-    if(g.dex>=50)t.push('고기술/필살형');
-    if(g.cha>=45)t.push('지원형');
-    return t;
-  }
-  function synergyTags(c) {
-    const s=c.personal+' '+c.unique,t=[];
-    const rules=[['기병 시너지',/기병|기마|기승|탑승|말에/],['비행 시너지',/비행|천익/],['활 시너지',/활을|활로|활 장비|활 공격|활 사용|활 명중/],['필살',/필살/],['추격',/추격/],['회복',/회복|치유/],['전열 지원',/인접|주위|주변|아군/],['마법 시너지',/마법|마력/]];
-    for(const [tag,re] of rules)if(re.test(s))t.push(tag);
-    return t;
-  }
-  function tags(c,state) {return Object.hasOwn(state.characterTags,c.id)?state.characterTags[c.id]:[...growthTags(c),...synergyTags(c)];}
+  // sideStory: part-1 side-story leads who join in part 3; their names are already known by then.
+  function visible(c,state) { return !!(state.settings.spoilers || c.excelKnown || c.sideStory || (c.availablePart && c.availablePart<=2)); }
   function buildRoles(b) {
     const r=new Set(b.roles);
     if(r.has('메인 힐러'))r.add('힐 가능');
@@ -118,7 +101,7 @@
     clean.updatedAt=typeof raw.updatedAt==='string'?raw.updatedAt:null;
     return clean;
   }
-  const API={STATS,ROLES,WEAPONS,MOVEMENTS,PART2_MAX_RANK,SQUADS,SQUAD_SIZE,FINAL_SIZE,clone,blankBuild,blankPart3,classWeapons,applyClass,initial,visible,growthTags,synergyTags,tags,buildRoles,analyze,validateState};
+  const API={STATS,ROLES,WEAPONS,MOVEMENTS,PART2_MAX_RANK,SQUADS,SQUAD_SIZE,FINAL_SIZE,clone,blankBuild,blankPart3,classWeapons,applyClass,initial,visible,buildRoles,analyze,validateState};
   root.PlannerCore=API;
   if(typeof module!=='undefined')module.exports=API;
 })(globalThis);
