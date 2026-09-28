@@ -462,18 +462,17 @@ body[data-view="overview"] .route-tab[aria-pressed="true"] { background: transpa
 .apt .pill { height: 28px; font-size: 13.5px; }
 .apt .weak-pill { background: color-mix(in oklab, var(--danger) 10%, var(--surface)); color: var(--danger); }
 
-.trait { border: 1px solid var(--line); border-radius: 10px; }
+.trait { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
 .trait + .trait { margin-top: 8px; }
-.trait summary { list-style: none; display: flex; align-items: center; gap: 10px; padding: 10px 12px; cursor: pointer; }
-.trait summary::-webkit-details-marker { display: none; }
-.trait-label { flex: none; width: 48px; font-size: 12.5px; font-weight: 700; color: var(--muted); }
-.trait-names { flex: 1; min-width: 0; font-size: 14.5px; font-weight: 650; }
-.trait summary svg { color: var(--muted); transition: rotate .15s; }
-.trait[open] summary svg { rotate: 180deg; }
-.trait dl { margin: 0; padding: 0 14px 12px 70px; }
-.trait dt { font-size: 13.5px; font-weight: 700; }
+.trait-label { font-size: 12.5px; font-weight: 700; color: var(--muted); line-height: 21px; }
+.trait dl { margin: 0; }
+.trait dt { font-size: 14.5px; font-weight: 700; line-height: 21px; }
 .trait dd { margin: 1px 0 8px; font-size: 14px; color: var(--text-2); line-height: 1.55; }
-.trait.none { display: flex; align-items: center; gap: 10px; padding: 10px 12px; color: var(--muted); font-size: 14px; }
+.trait dd:last-child { margin-bottom: 0; }
+.trait.none { color: var(--muted); font-size: 14px; }
+.cmp-trait { margin: 0 0 6px; }
+.cmp-trait:last-child { margin-bottom: 0; }
+.cmp-trait b { color: var(--text); }
 
 .tag-edit { display: grid; gap: 10px; padding: 12px; border-radius: 10px; background: var(--surface-2); }
 .tag-edit .row { display: flex; gap: 6px; }
@@ -571,7 +570,6 @@ body[data-view="overview"] .route-tab[aria-pressed="true"] { background: transpa
 .cmp-head b { display: block; font-size: 15px; }
 .cmp-table td { font-size: 14.5px; }
 .cmp-table td.text { font-size: 13px; text-align: left; vertical-align: top; color: var(--text-2); line-height: 1.5; }
-.cmp-table td.text details summary { cursor: pointer; font-weight: 650; color: var(--text); }
 
 .set { padding: 16px 0; border-top: 1px solid var(--line); }
 .set:first-child { border-top: 0; padding-top: 0; }
