@@ -11,7 +11,8 @@
   const FINAL_SIZE = 25;
   const SCHEMA = 2;
   const clone = x => JSON.parse(JSON.stringify(x));
-  const blankBuild = id => ({characterId:id,roleLabel:'',roles:[],primary:'',secondary:'',movement:'',finalClass:'',path:'',notes:''});
+  // mounts: family -> mount id chosen for that family ('' = explicitly none); only used on the Kai route and in part 3.
+  const blankBuild = id => ({characterId:id,roleLabel:'',roles:[],primary:'',secondary:'',movement:'',finalClass:'',path:'',notes:'',mounts:{}});
   // squad 0 is the bench; 1-5 are part-3 squads. final marks the final-chapter lineup.
   const blankPart3 = id => ({...blankBuild(id),squad:0,final:false});
   // Missing weapon data is unknown, not an empty equipment allowance.
@@ -70,7 +71,9 @@
     const build=(b,seen)=>{
       if(!b||!chars.has(b.characterId)||seen.has(b.characterId))fail();seen.add(b.characterId);
       if(!Array.isArray(b.roles)||b.roles.some(r=>!ROLES.includes(r))||b.roles.length>ROLES.length)fail();
-      return {characterId:b.characterId,roleLabel:str(b.roleLabel,150),roles:[...new Set(b.roles)],primary:one(b.primary,WEAPONS),secondary:one(b.secondary,WEAPONS),movement:one(b.movement,MOVEMENTS),finalClass:one(b.finalClass,[...jobs]),path:str(b.path??'',3000),notes:str(b.notes,20000)};
+      const mounts={};
+      if(b.mounts&&typeof b.mounts==='object'&&!Array.isArray(b.mounts))for(const [k,v] of Object.entries(b.mounts).slice(0,10))if(typeof v==='string'&&k.length<=20&&v.length<=20)mounts[k]=v;
+      return {characterId:b.characterId,mounts,roleLabel:str(b.roleLabel,150),roles:[...new Set(b.roles)],primary:one(b.primary,WEAPONS),secondary:one(b.secondary,WEAPONS),movement:one(b.movement,MOVEMENTS),finalClass:one(b.finalClass,[...jobs]),path:str(b.path??'',3000),notes:str(b.notes,20000)};
     };
     for(const r of data.routes){
       const list=raw.routes[r.id];
