@@ -835,7 +835,7 @@ function growthBlock(c, j) {
       const total = base == null ? null : base + add;
       const baseW = Math.max(0, Math.min(100, add < 0 ? total : base ?? 0));
       const addW = add > 0 ? Math.max(0, Math.min(100 - baseW, add)) : 0;
-      return `<div class="g-row${base >= 50 ? ' hi' : ''}"><span class="lab">${n}</span><span class="g-bar"><i style="width:${baseW}%"></i>${addW ? `<i class="cls" style="width:${addW}%"></i>` : ''}</span><span class="g-val">${total ?? '—'}${withJ && add ? `<small>${sign(add)}</small>` : ''}</span></div>`;
+      return `<div class="g-row${total >= 50 ? ' hi' : ''}"><span class="lab">${n}</span><span class="g-bar"><i style="width:${baseW}%"></i>${addW ? `<i class="cls" style="width:${addW}%"></i>` : ''}</span><span class="g-val">${total ?? '—'}</span></div>`;
     }).join('')}</div></div>`;
 }
 function traitBlock(label, text) {
