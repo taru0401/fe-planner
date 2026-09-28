@@ -194,10 +194,8 @@ function recruitOn(c, r) {
     return { ok: true, text: rs.length ? `1+2부 ${rs.join(' · ')}` : '1+2부 미배정' };
   }
   const rec = RECRUIT.routes[r]?.[c.id];
-  if (!rec) {
-    if (c.availablePart === 2) return { ok: true, text: '2부 합류', fame: 0, part2: true };
-    return { ok: false, text: c.sideStory ? '3부 합류' : '영입 불가' };
-  }
+  if (!rec) return { ok: false, text: c.sideStory ? '3부 합류' : '영입 불가' };
+  if (rec.part2) return { ok: true, text: '2부 합류', fame: 0, part2: true, rec };
   if (rec.auto) return { ok: true, text: '스토리 합류', fame: 0, rec };
   return { ok: true, text: `명성 ${rec.fame} · 지원 ${rec.support}`, fame: rec.fame, rec };
 }
@@ -887,7 +885,7 @@ function renderSchedule() {
     groups.at(-1).rows.push(row);
   }
   const scout = rows.filter(y => y.x.rec && !y.x.rec.auto).length;
-  el.innerHTML = `<div class="sched-top"><div><h2>${esc(r.name)} 영입 스케줄</h2><p class="col-sub">${ui.schedAll ? '영입 가능 전체' : '부대 편성'} ${rows.length}명 · 스토리 합류 ${rows.filter(y => y.x.rec?.auto).length}명 · 스카우트 ${scout}명</p></div>
+  el.innerHTML = `<div class="sched-top"><div><h2>${esc(r.name)} 영입 스케줄</h2><p class="col-sub">${ui.schedAll ? '영입 가능 전체' : '부대 편성'} ${rows.length}명 · 스토리 합류 ${rows.filter(y => y.x.rec?.auto && !y.x.part2).length}명 · 스카우트 ${scout}명</p></div>
       <div class="seg" role="group" aria-label="범위"><button data-act="sched-all" data-val="0" aria-pressed="${!ui.schedAll}">부대 편성만</button><button data-act="sched-all" data-val="1" aria-pressed="${ui.schedAll}">영입 가능 전체</button></div></div>
     <div class="sched-layout">
       <div class="sched-main">${groups.length ? groups.map(g => `<section class="sched-group"><h3>${g.label}<small>${g.rows.length}명</small></h3><div class="sched-grid">${g.rows.map(({ c, x }) => scheduleCard(c, x, squadIds.has(c.id))).join('')}</div></section>`).join('') : '<div class="squad-empty">부대에 편성한 캐릭터가 없습니다.<button class="btn sm primary" data-act="view" data-view="planner">부대 편성으로</button></div>'}</div>
