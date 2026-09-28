@@ -12,6 +12,7 @@ GitHub Pages 주소를 PC 또는 모바일 브라우저에서 열어 사용합�
 
 - [cass07 만자천홍 데이터베이스](https://cass07.github.io/fe18-db/): 캐릭터·병종 성장률, 특성, 능력치 보정, 전직 요구치, 마스터 스킬
 - [redfreshet 만자천홍 도구](https://redfreshet.com/game-tools/fe-banshisenko/): 특기·약점, 사용 무기, 이동 타입·이동력, 합류 시점 보완
+- [만자천홍 육성 도감](https://fefw.azaws.workers.dev/): 초기 초상화. 기본 공개 범위의 52명만 포함하며 후반 모습으로 자동 전환하지 않습니다.
 
 자료 기준: 2026-09-28. 외부 자료원에는 스포일러가 있을 수 있습니다. 게임 및 원자료의 권리는 각 권리자에게 있습니다.
 
