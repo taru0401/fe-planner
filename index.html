@@ -8,13 +8,13 @@
   <title>만자천홍 부대 편성실</title>
   <script>try{var s=JSON.parse(localStorage.getItem('banshisenko-planner:v1'));document.documentElement.dataset.theme=(s&&s.settings&&s.settings.theme)||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light')}catch(e){}</script>
   <link rel="icon" href="icon.svg?v=21a4fd13251e" type="image/svg+xml">
-  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
-  <link rel="stylesheet" href="styles.css?v=9399f032f9de">
+  <link rel="stylesheet" href="fonts/pretendard/pretendard.css?v=2973bcae8026">
+  <link rel="stylesheet" href="styles.css?v=ce3e4fb762bc">
   <script defer src="catalog.js?v=e07a9efd24f3"></script>
   <script defer src="portraits.js?v=d7a02b7227cc"></script>
+  <script defer src="sync.js?v=1e0220183790"></script>
   <script defer src="core.js?v=387b7d3b3fe8"></script>
-  <script defer src="app.js?v=61ba10dea928"></script>
+  <script defer src="app.js?v=711e43adfc5a"></script>
 </head>
 <body>
 <header class="topbar" id="topbar">
@@ -28,7 +28,7 @@
       <button data-act="view" data-view="planner">부대 편성</button>
       <button data-act="view" data-view="overview">루트 비교</button>
     </div>
-    <span id="save-status" class="save-status" role="status"></span>
+    <button id="save-status" class="save-status" data-act="settings" title="동기화·백업 설정" aria-live="polite"></button>
     <button id="theme-btn" class="icon-btn" data-act="theme" aria-label="다크 모드 전환" title="다크 모드 전환"></button>
     <button id="settings-btn" class="icon-btn" data-act="settings" aria-label="설정" title="설정"></button>
   </div>

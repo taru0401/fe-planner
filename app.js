@@ -162,19 +162,32 @@ function setStatus(text, bad = false) {
   el.textContent = text;
   el.classList.toggle('bad', bad);
 }
+function refreshStatus() {
+  if (corruptBackup) return setStatus('임시 편집 중', true);
+  if (storageError && !syncOn()) return setStatus('저장 실패', true);
+  if (syncOn()) {
+    if (sync.status === 'error') return setStatus('동기화 오류', true);
+    if (sync.status === 'syncing' || sync.dirty) return setStatus('동기화 중…');
+    return setStatus('동기화됨');
+  }
+  setStatus(state.updatedAt ? '저장됨' : '');
+}
+function writeLocal() {
+  try {
+    localStorage.setItem(KEY, JSON.stringify(state));
+    storageError = false;
+  } catch {
+    storageError = true;
+  }
+}
 function persist() {
   clearTimeout(saveTimer);
   saveTimer = 0;
   state.updatedAt = new Date().toISOString();
-  if (corruptBackup) { setStatus('임시 편집 중', true); return; }
-  try {
-    localStorage.setItem(KEY, JSON.stringify(state));
-    storageError = false;
-    setStatus('저장됨');
-  } catch {
-    storageError = true;
-    setStatus('저장 실패', true);
-  }
+  if (corruptBackup) { refreshStatus(); return; }
+  writeLocal();
+  queuePush();
+  refreshStatus();
   renderBanner();
 }
 function persistSoon() {
@@ -188,9 +201,138 @@ addEventListener('storage', ev => {
   try {
     state = C.validateState(JSON.parse(ev.newValue), D);
     render();
-    toast('다른 탭에서 바뀐 편성을 불러왔습니다.');
   } catch { /* keep current */ }
 });
+
+/* ---------- device sync (private GitHub gist) ---------- */
+const SYNC_KEY = 'banshisenko-planner:sync';
+const TOKEN_URL = `https://github.com/settings/tokens/new?scopes=gist&description=${encodeURIComponent('만자천홍 부대 편성실')}`;
+// base: updatedAt of the remote copy this device last saw; dirty: local edits not yet uploaded.
+let lastTyped = 0;
+const sync = { token: '', gistId: '', base: null, dirty: false, status: 'idle', error: '', busy: false, again: false, timer: 0, lastSync: null, pending: null };
+try {
+  const saved = JSON.parse(localStorage.getItem(SYNC_KEY) || 'null');
+  if (saved?.token && saved?.gistId) Object.assign(sync, { token: saved.token, gistId: saved.gistId, base: saved.base ?? null, dirty: !!saved.dirty });
+} catch { /* ignore */ }
+function syncOn() { return !!(sync.token && sync.gistId); }
+function saveSync() {
+  try {
+    if (syncOn()) localStorage.setItem(SYNC_KEY, JSON.stringify({ token: sync.token, gistId: sync.gistId, base: sync.base, dirty: sync.dirty }));
+    else localStorage.removeItem(SYNC_KEY);
+  } catch { /* ignore */ }
+}
+function queuePush() {
+  if (!syncOn()) return;
+  sync.dirty = true;
+  saveSync();
+  clearTimeout(sync.timer);
+  sync.timer = setTimeout(() => syncNow(), 1500);
+}
+const sameData = (a, b) => JSON.stringify([a.routes, a.characterTags, a.settings.spoilers]) === JSON.stringify([b.routes, b.characterTags, b.settings.spoilers]);
+function applyRemote(raw, keepUndo) {
+  let next;
+  try { next = C.validateState(raw, D); } catch { throw new Error('동기화 데이터가 손상되었습니다.'); }
+  next.settings.theme = state.settings.theme;
+  const changed = !sameData(next, state);
+  if (keepUndo && changed) snapshot();
+  state = next;
+  writeLocal();
+  sync.base = raw.updatedAt ?? null;
+  sync.dirty = false;
+  render();
+  return changed;
+}
+async function syncNow(fromPoll = false) {
+  if (!syncOn() || corruptBackup) return;
+  if (sync.busy) { sync.again = true; return; }
+  // Do not redraw under the cursor while the user is typing.
+  if (fromPoll && !sync.dirty && Date.now() - lastTyped < 4000) return;
+  sync.busy = true;
+  sync.status = 'syncing';
+  refreshStatus();
+  try {
+    const remote = await GistSync.read(sync.token, sync.gistId);
+    const remoteAt = remote?.updatedAt ?? null;
+    const remoteMoved = remoteAt !== sync.base;
+    if (remoteMoved && (!sync.dirty || (remoteAt && (!state.updatedAt || remoteAt > state.updatedAt)))) {
+      // Another device saved later: take its copy. Local unsent edits stay reachable through undo.
+      const conflict = sync.dirty;
+      if (applyRemote(remote, conflict)) toast(conflict ? '다른 기기에서 더 최근에 바뀐 편성으로 맞췄습니다.' : '다른 기기의 변경 사항을 반영했습니다.', conflict);
+    } else if (sync.dirty) {
+      const at = state.updatedAt;
+      await GistSync.write(sync.token, sync.gistId, state);
+      sync.base = at;
+      if (state.updatedAt === at) sync.dirty = false;
+    }
+    sync.status = 'ok';
+    sync.error = '';
+    sync.lastSync = new Date();
+  } catch (err) {
+    sync.status = 'error';
+    sync.error = err.message || '동기화하지 못했습니다.';
+  } finally {
+    sync.busy = false;
+    saveSync();
+    refreshStatus();
+    if (ui.modal?.kind === 'settings') renderModal();
+    if (sync.again) { sync.again = false; syncNow(); }
+  }
+}
+function finishConnect(token, gistId) {
+  sync.token = token;
+  sync.gistId = gistId;
+  sync.status = 'ok';
+  sync.error = '';
+  sync.lastSync = new Date();
+  sync.pending = null;
+  saveSync();
+  refreshStatus();
+}
+async function connectSync(token) {
+  if (corruptBackup) { sync.error = '저장 데이터를 먼저 복구하거나 백업을 불러와주세요.'; renderModal(); return; }
+  sync.error = '';
+  sync.status = 'syncing';
+  renderModal();
+  try {
+    const id = await GistSync.find(token);
+    if (!id) {
+      if (!state.updatedAt) { state.updatedAt = new Date().toISOString(); writeLocal(); }
+      const newId = await GistSync.create(token, state);
+      sync.base = state.updatedAt;
+      sync.dirty = false;
+      finishConnect(token, newId);
+      openModal({ kind: 'settings' });
+      toast('동기화를 시작했습니다. 다른 기기에서도 같은 토큰으로 연결하세요.');
+      return;
+    }
+    const remote = await GistSync.read(token, id);
+    let next;
+    try { next = C.validateState(remote, D); } catch { throw new Error('GitHub의 동기화 데이터가 손상되었습니다.'); }
+    if (!state.updatedAt || sameData(next, state)) {
+      finishConnect(token, id);
+      applyRemote(remote, true);
+      openModal({ kind: 'settings' });
+      toast('GitHub에 저장된 편성을 불러왔습니다.');
+      return;
+    }
+    sync.status = 'idle';
+    sync.pending = { token, id, remote };
+    const when = t => t ? esc(new Date(t).toLocaleString('ko-KR')) : '기록 없음';
+    const counts = st => D.routes.map(r => `${esc(r.name)} ${(st.routes[r.id] || []).length}`).join(' · ');
+    openModal({ kind: 'confirm', title: '어느 편성을 사용할까요?', ok: 'GitHub 편성 사용', okAct: 'sync-use-remote', cancel: '이 기기 편성 올리기', cancelAct: 'sync-use-local',
+      body: `<p>GitHub와 이 기기에 서로 다른 편성이 있습니다. 선택하지 않은 쪽은 덮어씌워집니다.</p>
+        <div class="choice"><b>GitHub</b><span>마지막 수정 ${when(remote.updatedAt)}</span><span>${counts(next)}</span></div>
+        <div class="choice"><b>이 기기</b><span>마지막 수정 ${when(state.updatedAt)}</span><span>${counts(state)}</span></div>` });
+  } catch (err) {
+    sync.status = 'idle';
+    sync.error = err.message || '연결하지 못했습니다.';
+    renderModal();
+  }
+}
+setInterval(() => { if (syncOn() && !document.hidden) syncNow(true); }, 15000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && syncOn()) syncNow(true); });
+addEventListener('focus', () => { if (syncOn()) syncNow(true); });
+addEventListener('online', () => { if (syncOn()) syncNow(); });
 
 function snapshot() { ui.undo = C.clone(state); }
 function undo() {
@@ -804,11 +946,31 @@ function compareHtml() {
       </tbody></table></div></div>
     <div class="m-foot"><button class="btn" data-act="clear-compare">비교 비우기</button><button class="btn primary" data-act="close-modal">닫기</button></div>`;
 }
+function syncSection() {
+  if (!syncOn()) {
+    return `<section class="set"><h3>기기 간 동기화</h3>
+      <p>GitHub의 비공개 gist에 편성을 저장합니다. 같은 토큰으로 연결한 모든 기기에 수정 내용이 자동으로 반영됩니다.</p>
+      <ol class="steps">
+        <li><a href="${TOKEN_URL}" target="_blank" rel="noopener noreferrer">GitHub 토큰 만들기</a>를 열고, gist만 체크된 상태로 맨 아래 <b>Generate token</b>을 누르세요.</li>
+        <li>만들어진 토큰을 아래에 붙여넣고 연결하세요. 다른 기기에서도 같은 토큰으로 한 번씩 연결하면 됩니다.</li>
+      </ol>
+      <div class="row"><input type="password" id="sync-token" placeholder="ghp_로 시작하는 토큰" autocomplete="off" spellcheck="false" aria-label="GitHub 토큰"><button class="btn primary" data-act="sync-connect"${sync.status === 'syncing' ? ' disabled' : ''}>${sync.status === 'syncing' ? '연결 중…' : '연결'}</button></div>
+      ${sync.error ? `<p class="hint warn">${esc(sync.error)}</p>` : ''}
+    </section>`;
+  }
+  const label = sync.status === 'error' ? '오류' : sync.status === 'syncing' || sync.dirty ? '동기화 중…' : '연결됨';
+  return `<section class="set"><h3>기기 간 동기화 <small>${label}</small></h3>
+    <p>수정하면 자동으로 올라가고, 다른 기기의 변경은 화면을 열거나 돌아올 때와 15초마다 반영됩니다.${sync.lastSync ? ` 마지막 확인 ${esc(sync.lastSync.toLocaleTimeString('ko-KR'))}.` : ''}</p>
+    ${sync.error ? `<p class="hint warn">${esc(sync.error)}</p>` : ''}
+    <div class="row"><button class="btn" data-act="sync-now"${sync.busy ? ' disabled' : ''}>지금 동기화</button><button class="btn danger" data-act="sync-disconnect">이 기기 연결 해제</button></div>
+  </section>`;
+}
 function settingsHtml() {
   const count = visibleChars().length;
   const dark = state.settings.theme === 'dark';
   return `${mHead('설정')}
     <div class="m-body">
+      ${syncSection()}
       <section class="set"><h3>스포일러 보호</h3>
         <label class="switch-row"><span>3부 이후 캐릭터도 표시</span><span class="switch"><input type="checkbox" id="spoiler-toggle"${state.settings.spoilers ? ' checked' : ''}><span></span></span></label>
         <p>현재 ${count}명 표시 중. 끄면 1·2부에 합류하는 캐릭터만 보입니다.</p></section>
@@ -991,7 +1153,39 @@ const A = {
     toast('백업을 불러왔습니다.', true);
   },
   undo() { undo(); },
-  'close-modal'() { closeModal(); }
+  'close-modal'() { closeModal(); },
+  'sync-connect'() {
+    const token = $('#sync-token')?.value.trim();
+    if (!token) { $('#sync-token')?.focus(); return; }
+    connectSync(token);
+  },
+  'sync-now'() { syncNow(); },
+  'sync-disconnect'() {
+    clearTimeout(sync.timer);
+    Object.assign(sync, { token: '', gistId: '', base: null, dirty: false, status: 'idle', error: '' });
+    saveSync();
+    refreshStatus();
+    renderModal();
+    toast('이 기기의 동기화를 해제했습니다. GitHub의 데이터는 그대로 있습니다.');
+  },
+  'sync-use-remote'() {
+    const p = sync.pending;
+    if (!p) return;
+    finishConnect(p.token, p.id);
+    applyRemote(p.remote, true);
+    openModal({ kind: 'settings' });
+    toast('GitHub 편성으로 맞췄습니다.', true);
+  },
+  'sync-use-local'() {
+    const p = sync.pending;
+    if (!p) return;
+    sync.base = p.remote.updatedAt ?? null;
+    finishConnect(p.token, p.id);
+    sync.dirty = true;
+    saveSync();
+    openModal({ kind: 'settings' });
+    syncNow();
+  }
 };
 
 document.addEventListener('click', ev => {
@@ -1002,6 +1196,7 @@ document.addEventListener('click', ev => {
 });
 document.addEventListener('input', ev => {
   const t = ev.target;
+  lastTyped = Date.now();
   if (t.id === 'search') { f.q = t.value; renderList(); return; }
   if (t.id === 'picker-q') { ui.modal.q = t.value; renderPickerList(); return; }
   if (t.dataset.bfield) {
@@ -1037,6 +1232,7 @@ document.addEventListener('keydown', ev => {
   const t = ev.target;
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName);
   if (t.id === 'tag-input' && ev.key === 'Enter') { ev.preventDefault(); A['tag-add']({}); return; }
+  if (t.id === 'sync-token' && ev.key === 'Enter') { ev.preventDefault(); A['sync-connect'](); return; }
   if (t.id === 'search' && ev.key === 'Escape' && t.value) { ev.preventDefault(); t.value = ''; f.q = ''; renderList(); return; }
   if (t.dataset?.handle && (ev.key === 'ArrowUp' || ev.key === 'ArrowDown')) {
     ev.preventDefault();
@@ -1141,8 +1337,8 @@ $('.search-icon').innerHTML = I.search;
 $$('[data-icon]').forEach(el => { el.outerHTML = I[el.dataset.icon]; });
 $('#sort').innerHTML = options(SORTS, ui.sort);
 new ResizeObserver(() => document.documentElement.style.setProperty('--hh', `${$('#topbar').offsetHeight}px`)).observe($('#topbar'));
-if (corruptBackup) setStatus('임시 편집 중', true);
-else if (storageError) setStatus('저장 실패', true);
 renderBanner();
 render();
+refreshStatus();
+if (syncOn()) syncNow();
 })();
