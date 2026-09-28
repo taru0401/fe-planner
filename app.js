@@ -626,16 +626,25 @@ function squadRow(b, i, a, p3 = false) {
   const role = b.roleLabel || C.buildRoles(b).join(' · ');
   const weapons = [...new Set([b.primary, b.secondary].filter(Boolean))];
   const dupJob = j && a.classes[j.id]?.length >= DUP.job;
-  return `<li class="squad-row${ui.drawer?.id === c.id ? ' active' : ''}" data-id="${c.id}">
-    <button class="handle" data-handle="${c.id}" aria-label="${e(c.name)} 순서 이동 (위아래 화살표)" title="끌어서 순서${p3 ? '·부대' : ''} 변경">${I.grip}</button>
+  return `<li class="squad-row${p3 ? ' p3' : ''}${ui.drawer?.id === c.id ? ' active' : ''}" data-id="${c.id}">
+    <button class="handle" data-handle="${c.id}" aria-label="${e(c.name)} 순서 이동 (위아래 화살표)" title="끌어서 순서 변경">${I.grip}</button>
     <button class="squad-open" data-act="open" data-id="${c.id}" data-tab="build">
       <span class="squad-num">${i + 1}</span>${avatar(c)}
       <span class="squad-text"><span class="squad-name">${e(c.name)}</span><span class="squad-role${role ? '' : ' muted'}">${e(role || '역할 미정')}</span></span>
       <span class="squad-build">${j ? `<span class="pill job${dupJob ? ' dup' : ''}">${esc(j.name)}</span>` : '<span class="pill ghost">최종직 미정</span>'}${weapons.map(w => `<span class="pill">${esc(w)}</span>`).join('')}${b.movement ? `<span class="pill">${esc(b.movement)}</span>` : ''}</span>
     </button>
+    ${p3 ? squadPicker(b, c) : ''}
     ${p3 ? `<button class="icon-btn star" data-act="p3-final" data-id="${c.id}" aria-pressed="${b.final}" aria-label="${e(c.name)} 최종장 출격" title="최종장 출격 ${b.final ? '해제' : '지정'}">${I.star}</button>` : ''}
     <button class="icon-btn remove" data-act="remove" data-id="${c.id}" aria-label="${e(c.name)} ${esc(teamName(ui.route))}에서 제외" title="${esc(teamName(ui.route))}에서 제외">${I.x}</button>
   </li>`;
+}
+// One tap per row to move a part-3 unit between squads; full squads are disabled.
+function squadPicker(b, c) {
+  return `<div class="squad-pick" role="group" aria-label="${e(c.name)} 부대 선택">${[1, 2, 3, 4, 5, 0].map(n => {
+    const on = b.squad === n;
+    const full = !on && n > 0 && squadCount(n) >= C.SQUAD_SIZE;
+    return `<button data-act="p3-squad-row" data-id="${c.id}" data-squad="${n}" aria-pressed="${on}"${full ? ' disabled title="8명이 찼습니다"' : ` title="${n ? `${n}부대` : '대기'}"`}>${n || '대기'}</button>`;
+  }).join('')}</div>`;
 }
 const dupAlerts = a => {
   const d = dupes(a);
@@ -1226,6 +1235,7 @@ const A = {
     openModal({ kind: 'picker', mode: d.mode, q: '', tier: p3 && !drawerBuild()?.finalClass ? String(C.PART2_MAX_RANK + 1) : '', fit: false, open: drawerBuild()?.finalClass || null });
   },
   'p3-squad'(d) { setSquad(ui.drawer.id, Number(d.squad)); },
+  'p3-squad-row'(d) { setSquad(d.id, Number(d.squad)); },
   'p3-final'(d) { const b = getBuild(P3.id, d.id); if (b) setFinal(d.id, !b.final); },
   'p3-scope'(d) { ui.p3scope = d.scope; renderStats(); },
   'p3-import'() { importToP3(); },
