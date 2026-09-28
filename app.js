@@ -711,7 +711,7 @@ function growthBlock(c, j) {
 function traitBlock(label, text) {
   const t = traits(text);
   if (!t.length) return `<div class="trait none"><span class="trait-label">${label}</span>없음</div>`;
-  return `<details class="trait"><summary><span class="trait-label">${label}</span><span class="trait-names">${esc(t.map(x => x.name).join(' / '))}</span>${I.chev}</summary><dl>${t.map(x => `<dt>${esc(x.name)}</dt><dd>${esc(x.body || '—')}</dd>`).join('')}</dl></details>`;
+  return `<div class="trait"><span class="trait-label">${label}</span><dl>${t.map(x => `<dt>${esc(x.name)}</dt>${x.body ? `<dd>${esc(x.body)}</dd>` : ''}`).join('')}</dl></div>`;
 }
 function tagBlock(c) {
   const tags = C.tags(c, state);
@@ -928,7 +928,7 @@ function compareHtml() {
   const best = k => Math.max(...cs.map(c => c.growth[k] ?? -1));
   const r = cur();
   const text = (label, fn) => `<tr><th>${label}</th>${cs.map(c => `<td class="text">${fn(c)}</td>`).join('')}</tr>`;
-  const traitCell = t => { const x = traits(t); return x.length ? x.map(y => `<details><summary>${esc(y.name)}</summary>${esc(y.body)}</details>`).join('') : '없음'; };
+  const traitCell = t => { const x = traits(t); return x.length ? x.map(y => `<p class="cmp-trait"><b>${esc(y.name)}</b>${y.body ? ` ${esc(y.body)}` : ''}</p>`).join('') : '없음'; };
   return `${mHead('후보 비교', '성장률이 가장 높은 값을 강조합니다.')}
     <div class="m-body"><div class="table-wrap"><table class="table cmp-table">
       <colgroup><col class="cmp-label">${cs.map(() => '<col>').join('')}</colgroup>
