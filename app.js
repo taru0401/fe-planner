@@ -220,8 +220,8 @@ function dupes(a) {
 /* ---------- mounts ---------- */
 const familyOf = jobId => MOUNT_DATA.classFamily[jobId] || '';
 const mountsApply = r => r === MOUNT_ROUTE || isP3(r);
+// Classes a build passes through: its transfer path, then its final class. Part 3 lists only part-3 changes.
 function classesOf(b, r) {
-  if (isP3(r)) return b.finalClass ? [b.finalClass] : [];
   const ids = (b.path || '').split(/→|->|>|＞|,/).map(n => D.classes.find(x => x.name.replace(/\s/g, '') === n.trim().replace(/\s/g, ''))?.id).filter(Boolean);
   if (b.finalClass) ids.push(b.finalClass);
   return [...new Set(ids)];
@@ -1096,7 +1096,7 @@ function historyBlock(c) {
 function mountField(c, b, r) {
   const slots = mountSlots(b, r);
   if (!slots.size) {
-    return `<div class="field"><span class="f-label">탈것</span><p class="hint">${b.finalClass || b.path ? '이 직업과 전직 경로에는 탈것이 필요 없습니다.' : '직업이나 전직 경로를 정하면 필요한 탈것 칸이 생깁니다.'}</p></div>`;
+    return `<div class="field" id="mount-field"><span class="f-label">탈것</span><p class="hint">${b.finalClass || b.path ? '최종직과 전직 경로에 탈것을 타는 병종이 없습니다.' : '최종직이나 전직 경로에 기병·비행 병종을 넣으면 계열별 탈것 칸이 생깁니다.'}</p></div>`;
   }
   const finalFam = familyOf(b.finalClass);
   const times = b.finalClass === CHARIOT ? 2 : 1;
@@ -1117,7 +1117,7 @@ function mountField(c, b, r) {
       ${m ? `<p class="hint">${esc(growthText(m.growth, fam === finalFam ? times : 1))}${fam === finalFam && times > 1 ? ' (전차병 2배)' : ''} · ${esc(m.food)}·${esc(m.taste)}</p>` : ''}
     </div>`;
   }).join('');
-  return `<div class="field"><span class="f-label">탈것 <small>우호 Lv.5 기준</small></span>${rows}</div>`;
+  return `<div class="field" id="mount-field"><span class="f-label">탈것 <small>우호 Lv.5 기준</small></span>${rows}<p class="hint">거쳐 가는 병종을 위 전직 경로에 넣으면 계열별 칸이 늘어납니다.</p></div>`;
 }
 function buildBlock(c, d) {
   const r = routes.get(d.route);
@@ -1151,10 +1151,10 @@ function buildBlock(c, d) {
     <div class="field"><span class="f-label">주무기${j && !j.weapons.length ? ' <small>무기 자료가 없어 전체 표시</small>' : ''}</span>${weaponChips(b, 'primary', allowed)}</div>
     <div class="field"><span class="f-label">보조무기</span>${weaponChips(b, 'secondary', allowed)}</div>
     <div class="field"><span class="f-label">이동 타입</span><div class="chips">${C.MOVEMENTS.map(x => `<button class="chip" data-act="movement" data-move="${x}" aria-pressed="${b.movement === x}">${x}</button>`).join('')}</div></div>
+    <div class="field"><span class="f-label">${p3 ? '3부 중간 전직 경로 <small>3부에서 거쳐 가는 병종만</small>' : '중간 전직 경로'}</span>
+      <div class="path-row"><input type="text" data-bfield="path" value="${esc(b.path)}" maxlength="3000" placeholder="${p3 ? '천익병 → 성천익병' : '병사 → 기갑 타조병 → 가디언'}"><button class="btn" data-act="pick-class" data-mode="path">${I.plus}병종</button></div>
+      <div class="path-chips" id="path-chips">${pathChips(b.path)}</div></div>
     ${mountsApply(r.id) ? mountField(c, b, r.id) : ''}
-    ${p3 ? '' : `<div class="field"><span class="f-label">중간 전직 경로</span>
-      <div class="path-row"><input type="text" data-bfield="path" value="${esc(b.path)}" maxlength="3000" placeholder="병사 → 기갑 타조병 → 가디언"><button class="btn" data-act="pick-class" data-mode="path">${I.plus}병종</button></div>
-      <div class="path-chips" id="path-chips">${pathChips(b.path)}</div></div>`}
     <label class="field"><span class="f-label">육성 메모</span><textarea data-bfield="notes" rows="4" maxlength="20000" placeholder="우선 훈련할 적성, 장비, 목표 등">${esc(b.notes)}</textarea></label>
     <div class="build-foot">
       <span class="order-btns">순서 ${pos + 1}/${ids.length}
@@ -1591,7 +1591,10 @@ document.addEventListener('input', ev => {
     persistSoon();
     renderSquad();
     renderStats();
-    if (t.dataset.bfield === 'path') $('#path-chips').innerHTML = pathChips(b.path);
+    if (t.dataset.bfield === 'path') {
+      $('#path-chips').innerHTML = pathChips(b.path);
+      if (mountsApply(ui.drawer.route)) $('#mount-field').outerHTML = mountField(chars.get(ui.drawer.id), b, ui.drawer.route);
+    }
   }
 });
 document.addEventListener('change', ev => {
