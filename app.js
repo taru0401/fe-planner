@@ -23,6 +23,16 @@ const PROFS = ['검', '창', '도끼', '활', '격투', '흑마법', '백마법'
 const QUICK = ['물리', '마법', '활', '기병', '비행', '중장', '힐러'];
 const RECRUIT = { routes: {}, part3: {}, guide: [], names: {}, ...globalThis.FE_RECRUIT };
 const GIFTS = globalThis.FE_GIFTS || {};
+// Support partners by character: { id, stages, max, end }.
+const SUPPORT = new Map();
+for (const [a, b, stages, max, end] of globalThis.FE_SUPPORTS || []) {
+  for (const [x, y] of [[a, b], [b, a]]) {
+    if (!SUPPORT.has(x)) SUPPORT.set(x, []);
+    SUPPORT.get(x).push({ id: y, stages, max, end });
+  }
+}
+const RANK_ORDER = { S: 4, A: 3, B: 2, C: 1 };
+const END_LABEL = { confirmed: '페어엔딩 확인', candidate: 'A 지원', pending: '단계 미확인', s: 'S 지원' };
 // Side-story leads cannot be recruited in parts 1-2 but join in part 3; they are known, not spoilers.
 for (const [id, text] of Object.entries(RECRUIT.part3)) if (chars.has(id)) chars.get(id).sideStory = text;
 // The recruitment checklist uses Namuwiki spellings; keep them searchable.
@@ -742,6 +752,17 @@ function statBuilds() {
   if (s !== 'all') return all.filter(b => b.squad === Number(s));
   return all;
 }
+// Support pairs possible inside the given builds (a route squad, the 3부 roster, one squad or the final 25).
+function pairsHtml(builds) {
+  const ids = new Set(builds.map(b => b.characterId));
+  const pairs = [];
+  for (const id of ids) for (const p of partnersOf(id)) if (ids.has(p.id) && id < p.id) pairs.push({ a: id, ...p });
+  pairs.sort(supportSort);
+  const name = id => `<button data-act="open" data-id="${id}">${e(chars.get(id).name)}</button>`;
+  return `<section class="stat-sec"><h3>가능한 지원회화 <small>${pairs.length}쌍</small></h3>
+    ${pairs.length ? `<div class="pair-list">${pairs.map(p => `<div class="pair-row"><span class="pair-names">${name(p.a)}<i>↔</i>${name(p.id)}</span>${supportTag(p)}</div>`).join('')}</div>` : '<p class="note">이 범위 안에서 가능한 지원회화가 없습니다.</p>'}
+  </section>`;
+}
 function renderStats() {
   const r = cur();
   const p3 = isP3(r.id);
@@ -766,6 +787,7 @@ function renderStats() {
     <section class="stat-sec"><h3>최종직 <small>${a.missing.classes ? `미정 ${a.missing.classes}명` : ''}</small></h3>
       ${groups.length ? groups.map(([id, ids]) => `<div class="job-group${ids.length >= DUP.job ? ' dup' : ''}"><div class="job-top"><button data-act="class-info" data-job="${id}">${esc(jobName(id))}</button><span class="n">×${ids.length}</span></div><div class="name-links">${ids.map(cid => `<button data-act="open" data-id="${cid}" data-tab="build">${e(chars.get(cid).name)}</button>`).join('')}</div></div>`).join('') : '<p class="note">아직 지정한 최종직이 없습니다.</p>'}
     </section>
+    ${pairsHtml(builds)}
     ${todo.length ? `<section class="stat-sec"><h3>빌드 미정 <small>${todo.length}명</small></h3>${todo.map(b => `<button class="todo-row" data-act="open" data-id="${b.characterId}" data-tab="build"><b>${e(chars.get(b.characterId).name)}</b><span>${missingParts(b).join(' · ')}</span></button>`).join('')}</section>` : ''}
   </div>`;
 }
@@ -922,6 +944,22 @@ function traitBlock(label, text) {
   if (!t.length) return `<div class="trait none"><span class="trait-label">${label}</span>없음</div>`;
   return `<div class="trait"><span class="trait-label">${label}</span><dl>${t.map(x => `<dt>${esc(x.name)}</dt>${x.body ? `<dd>${esc(x.body)}</dd>` : ''}`).join('')}</dl></div>`;
 }
+// Partners the viewer may see; hidden (spoiler) characters are left out.
+const partnersOf = id => (SUPPORT.get(id) || []).filter(p => isVisible(p.id));
+const supportSort = (a, b) => (RANK_ORDER[b.max] || 0) - (RANK_ORDER[a.max] || 0) || chars.get(a.id).name.localeCompare(chars.get(b.id).name, 'ko');
+function supportTag(p) {
+  return `<span class="sup-rank">${esc(p.stages || '단계 미확인')}</span>${p.end && p.end !== 'pending' ? `<span class="sup-end ${p.end}">${END_LABEL[p.end]}</span>` : ''}`;
+}
+function supportBlock(c, r) {
+  const list = partnersOf(c.id);
+  if (!list.length) return `<div class="block"><h3>지원회화</h3><p class="note">확인된 지원회화 상대가 없습니다.</p></div>`;
+  const team = new Set(shown(r).map(b => b.characterId));
+  const inTeam = list.filter(p => team.has(p.id)).sort(supportSort);
+  const rest = list.filter(p => !team.has(p.id)).sort(supportSort);
+  const row = (p, on) => `<button class="sup-row${on ? ' on' : ''}" data-act="open" data-id="${p.id}"><span class="sup-name">${e(chars.get(p.id).name)}</span>${supportTag(p)}</button>`;
+  return `<div class="block"><div class="block-head"><h3>지원회화 <small class="muted">${list.length}명</small></h3><span class="note">${esc(teamName(r))}에 ${inTeam.length}명</span></div>
+    <div class="sup-list">${inTeam.map(p => row(p, true)).join('')}${rest.map(p => row(p, false)).join('')}</div></div>`;
+}
 function giftLine(c) {
   return GIFTS[c.id] ? `<p class="gifts"><b>좋아하는 선물</b> ${e(GIFTS[c.id])}</p>` : '';
 }
@@ -1033,6 +1071,7 @@ function renderDrawer(resetScroll = false) {
         </div>
         <div class="block"><h3>특성</h3>${traitBlock('개인', c.personal)}${traitBlock('유니크', c.unique)}</div>
         ${recruitBlock(c, d.route)}
+        ${supportBlock(c, d.route)}
       </section>
       <section class="d-build">${buildBlock(c, d)}</section>
     </div>`;
