@@ -9,12 +9,13 @@
   <script>try{var s=JSON.parse(localStorage.getItem('banshisenko-planner:v1'));document.documentElement.dataset.theme=(s&&s.settings&&s.settings.theme)||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light')}catch(e){}</script>
   <link rel="icon" href="icon.svg?v=21a4fd13251e" type="image/svg+xml">
   <link rel="stylesheet" href="fonts/pretendard/pretendard.css?v=2973bcae8026">
-  <link rel="stylesheet" href="styles.css?v=38831fc66430">
+  <link rel="stylesheet" href="styles.css?v=57eaff3feeff">
   <script defer src="catalog.js?v=e07a9efd24f3"></script>
   <script defer src="portraits.js?v=d7a02b7227cc"></script>
+  <script defer src="recruit.js?v=a99eb40dd0fc"></script>
   <script defer src="sync.js?v=1e0220183790"></script>
-  <script defer src="core.js?v=26231f939481"></script>
-  <script defer src="app.js?v=5b344becafff"></script>
+  <script defer src="core.js?v=ebbfb341ba9a"></script>
+  <script defer src="app.js?v=b1e89935a9bb"></script>
 </head>
 <body>
 <header class="topbar" id="topbar">
@@ -42,7 +43,7 @@
       <div class="list-tools">
         <label class="search">
           <span class="search-icon" aria-hidden="true"></span>
-          <input id="search" type="search" placeholder="이름·초성·특성·태그" autocomplete="off" aria-label="캐릭터 검색">
+          <input id="search" type="search" placeholder="이름·초성·특성" autocomplete="off" aria-label="캐릭터 검색">
           <kbd>/</kbd>
         </label>
         <div class="seg assign-seg" id="assign-seg" role="group" aria-label="배정 상태">
@@ -58,6 +59,7 @@
         <div id="filter-panel" class="filter-panel" hidden></div>
         <div class="list-meta">
           <span id="list-count"></span>
+          <button id="recruit-toggle" class="chip recruit-toggle" data-act="recruit-only"></button>
           <label class="sort">정렬 <select id="sort"></select></label>
         </div>
       </div>
