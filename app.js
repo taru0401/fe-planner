@@ -1,234 +1,1148 @@
 'use strict';
 (() => {
-const D=globalThis.FE_DATA,C=globalThis.PlannerCore,KEY='banshisenko-planner:v1';
-const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
-const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const chars=new Map(D.characters.map(c=>[c.id,c])),jobs=new Map(D.classes.map(c=>[c.id,c]));
-let state=C.initial(D),route='dietrich',view='planner',pane='squad',detailId=null,detailRoute=route,compare=[],filterTag='',toastTimer,pendingImport=null,undoState=null,storageError=false;
-const f={q:'',assignment:'all',role:'',job:'',strength:'',weakness:'',tag:''};
-let corruptBackup=null;
-try{const saved=localStorage.getItem(KEY);if(saved){try{state=C.validateState(JSON.parse(saved),D);}catch{corruptBackup=saved;storageError=true;}}}catch{storageError=true;}
-if(storageError)$('#storage-warning').textContent=corruptBackup?'기존 저장 데이터를 읽지 못했습니다. 원본을 보존하고 임시 편성으로 열었습니다. 설정에서 복구용 원본을 내보내거나 정상 백업을 불러오세요.':'브라우저 저장소를 사용할 수 없습니다. 편집은 가능하며, 종료 전에 JSON으로 내보내주세요.';
-$('#storage-warning').hidden=!storageError;
-// Protection always starts enabled after imports; ordinary local sessions retain an explicit choice.
-function safe(s){if(state.settings.spoilers)return String(s??'');let t=String(s??'');for(const c of D.characters)if(!C.visible(c,state))t=t.replaceAll(c.name,'[비공개]');return t;}
-const e=s=>esc(safe(s));
-const current=()=>D.routes.find(r=>r.id===route);
-const isVisible=id=>chars.has(id)&&C.visible(chars.get(id),state);
-const shownBuilds=r=>state.routes[r].filter(b=>isVisible(b.characterId));
-const assigned=id=>D.routes.filter(r=>state.routes[r.id].some(b=>b.characterId===id));
-const getBuild=(r,id)=>state.routes[r].find(b=>b.characterId===id);
-const jobName=id=>jobs.get(id)?.name||'최종직 미정';
-const fmt=n=>n===null||n===undefined?'미수록':(n>0?'+':'')+n;
-function avatar(c){const g=c.growth,k=g.mg>=45?'magic':g.spd>=50?'fast':'physical',portrait=globalThis.FE_PORTRAITS?.[c.id];return `<span class="avatar ${k}" aria-hidden="true"><span>${e(c.name[0])}</span>${portrait?`<img class="portrait" src="${esc(portrait)}" alt="" width="96" height="96" decoding="async" draggable="false">`:''}</span>`;}
-document.addEventListener('error',ev=>{if(ev.target.matches?.('img.portrait'))ev.target.hidden=true;},true);
-function options(values,value,empty='미정'){return `<option value="">${empty}</option>`+values.map(x=>{const [v,n]=Array.isArray(x)?x:[x,x];return `<option value="${esc(v)}" ${v===value?'selected':''}>${e(n)}</option>`;}).join('');}
-function button(action,text,attrs=''){return `<button data-action="${action}" ${attrs}>${text}</button>`;}
-function toast(msg,undo=false){clearTimeout(toastTimer);$('#toast').textContent=msg;if(undo)$('#toast').insertAdjacentHTML('beforeend',' <button data-action="undo">되돌리기</button>');$('#toast').hidden=false;toastTimer=setTimeout(()=>$('#toast').hidden=true,undo?8000:3300);}
-function undo(){if(!undoState)return;state=undoState;undoState=null;save();render();if($('#detail-dialog').open)renderDetail();toast('편성 변경을 되돌렸습니다.');}
-function save(){
- state.updatedAt=new Date().toISOString();
- if(corruptBackup){$('#save-status').textContent='임시 편집 · 백업 필요';return;}
- try{localStorage.setItem(KEY,JSON.stringify(state));storageError=false;$('#save-status').textContent='자동 저장됨';$('#storage-warning').hidden=true;}
- catch{storageError=true;$('#save-status').textContent='저장 실패 · 내보내기';$('#storage-warning').hidden=false;$('#storage-warning').textContent='브라우저에 저장하지 못했습니다. 현재 편성은 메모리에 유지됩니다. 데이터 내보내기로 백업해주세요.';}
+const D = globalThis.FE_DATA;
+const C = globalThis.PlannerCore;
+const PORTRAITS = globalThis.FE_PORTRAITS || {};
+const KEY = 'banshisenko-planner:v1';
+const UI_KEY = 'banshisenko-planner:ui';
+
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+const chars = new Map(D.characters.map(c => [c.id, c]));
+const jobs = new Map(D.classes.map(j => [j.id, j]));
+const routes = new Map(D.routes.map(r => [r.id, r]));
+const STAT_KEYS = C.STATS.map(([k]) => k);
+const PROFS = ['검', '창', '도끼', '활', '격투', '흑마법', '백마법', '기마', '비행', '중장', '보병', '지휘'];
+const QUICK = ['물리', '마법', '활', '기병', '비행', '중장', '힐러'];
+const AUTO_TAGS = ['고속 물리', '물리 딜탱', '마법 딜러', '마법탱', '하이브리드', '고기술/필살형', '지원형', '기병 시너지', '비행 시너지', '활 시너지', '필살', '추격', '회복', '전열 지원', '마법 시너지'];
+const TIERS = [...new Map(D.classes.map(j => [j.rank, j.tier]))].sort((a, b) => a[0] - b[0]);
+const SORTS = [['default', '기본'], ['name', '이름'], ...C.STATS.map(([k, n]) => [k, `${n} 높은 순`])];
+// A count at or above these marks is highlighted as overlap. It is a fact, not a verdict.
+const DUP = { role: 4, weapon: 4, job: 2 };
+
+/* ---------- icons ---------- */
+const svg = (d, extra = '') => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true" ${extra}>${d}</svg>`;
+const I = {
+  plus: svg('<path d="M12 5v14M5 12h14"/>'),
+  check: svg('<path d="m5 12.5 4.5 4.5L19 7.5"/>'),
+  x: svg('<path d="M6 6l12 12M18 6 6 18"/>'),
+  search: svg('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>'),
+  compare: svg('<rect x="3.5" y="5" width="7" height="14" rx="1.5"/><rect x="13.5" y="5" width="7" height="14" rx="1.5"/>'),
+  grip: svg('<circle cx="9" cy="6" r="1.3"/><circle cx="15" cy="6" r="1.3"/><circle cx="9" cy="12" r="1.3"/><circle cx="15" cy="12" r="1.3"/><circle cx="9" cy="18" r="1.3"/><circle cx="15" cy="18" r="1.3"/>', 'style="fill:currentColor;stroke:none"'),
+  moon: svg('<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/>'),
+  sun: svg('<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/>'),
+  gear: svg('<circle cx="12" cy="12" r="7.6" stroke-width="3.2" stroke-dasharray="2.99 2.98" stroke-linecap="butt"/><circle cx="12" cy="12" r="5.6"/><circle cx="12" cy="12" r="2"/>'),
+  chev: svg('<path d="m6 9 6 6 6-6"/>'),
+  info: svg('<circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.6v.2"/>'),
+  up: svg('<path d="m6 15 6-6 6 6"/>'),
+  down: svg('<path d="m6 9 6 6 6-6"/>'),
+  user: svg('<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/>'),
+  shield: svg('<path d="M12 3 20 6v6c0 4.8-3.4 8-8 9-4.6-1-8-4.2-8-9V6Z"/>'),
+  bars: svg('<path d="M5 20v-8M12 20V5M19 20v-12"/>'),
+  grid: svg('<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>'),
+  pencil: svg('<path d="M4 20h4L19 9l-4-4L4 16Z"/><path d="m13.5 6.5 4 4"/>')
+};
+
+/* ---------- state ---------- */
+let state = C.initial(D);
+let corruptBackup = null;
+let storageError = false;
+let hadSaved = false;
+try {
+  const saved = localStorage.getItem(KEY);
+  if (saved) {
+    hadSaved = true;
+    try { state = C.validateState(JSON.parse(saved), D); } catch { corruptBackup = saved; }
+  }
+} catch { storageError = true; }
+if (!hadSaved && matchMedia('(prefers-color-scheme: dark)').matches) state.settings.theme = 'dark';
+
+const ui = {
+  route: 'dietrich', view: 'planner', pane: 'squad', sort: 'default',
+  filtersOpen: false, compare: [], undo: null,
+  drawer: null, withClass: true, tagEdit: false, modal: null, pendingImport: null
+};
+try {
+  const saved = JSON.parse(localStorage.getItem(UI_KEY) || '{}');
+  if (routes.has(saved.route)) ui.route = saved.route;
+  if (SORTS.some(([k]) => k === saved.sort)) ui.sort = saved.sort;
+  if (typeof saved.withClass === 'boolean') ui.withClass = saved.withClass;
+} catch { /* ignore */ }
+const saveUi = () => { try { localStorage.setItem(UI_KEY, JSON.stringify({ route: ui.route, sort: ui.sort, withClass: ui.withClass })); } catch { /* ignore */ } };
+
+const f = { q: '', assign: 'all', route: '', quick: '', role: '', job: '', strength: '', weakness: '', tag: '' };
+const PANEL_FILTERS = ['route', 'role', 'job', 'strength', 'weakness', 'tag'];
+
+/* ---------- helpers ---------- */
+// Hidden characters' names must not leak through other characters' trait text.
+function safe(s) {
+  let t = String(s ?? '');
+  if (state.settings.spoilers) return t;
+  for (const c of D.characters) if (!C.visible(c, state)) t = t.replaceAll(c.name, '[비공개]');
+  return t;
 }
-function setTheme(){document.body.classList.toggle('dark',state.settings.theme==='dark');$('meta[name="theme-color"]').content=state.settings.theme==='dark'?'#191d20':'#f5f3ee';}
-function renderRoutes(){
- $('#route-tabs').innerHTML=D.routes.map((r,i)=>`<button class="route-tab ${r.id===route?'active':''}" style="--tab-color:${r.color}" data-route="${r.id}" aria-pressed="${r.id===route}"><span class="route-emblem" aria-hidden="true">${['◇','♜','✧','☽'][i]}</span><span><strong>${r.name}</strong><small>ROUTE 0${i+1}</small></span><span class="count">${shownBuilds(r.id).length}</span></button>`).join('');
- document.documentElement.style.setProperty('--route',current().color);
+const e = s => esc(safe(s));
+const isVisible = id => chars.has(id) && C.visible(chars.get(id), state);
+const visibleChars = () => D.characters.filter(c => C.visible(c, state));
+const shown = r => state.routes[r].filter(b => isVisible(b.characterId));
+const getBuild = (r, id) => state.routes[r].find(b => b.characterId === id);
+const assigned = id => D.routes.filter(r => getBuild(r.id, id));
+const jobName = id => jobs.get(id)?.name || '';
+const cur = () => routes.get(ui.route);
+const sign = n => n == null ? '—' : n > 0 ? `+${n}` : String(n);
+const filled = s => s && s.trim() !== '-' ? s.trim() : '';
+const drawerBuild = () => ui.drawer && getBuild(ui.drawer.route, ui.drawer.id);
+const isMobile = () => matchMedia('(max-width: 759px)').matches;
+
+const CHO = 'ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ';
+const cho = s => [...s].map(ch => { const k = ch.charCodeAt(0) - 0xac00; return k >= 0 && k < 11172 ? CHO[Math.floor(k / 588)] : ch; }).join('');
+const isCho = q => /^[ㄱ-ㅎ]+$/.test(q);
+
+// Decode the inline data URLs once into short blob URLs so re-rendering lists stays cheap.
+const portraitUrls = new Map();
+function portrait(id) {
+  if (portraitUrls.has(id)) return portraitUrls.get(id);
+  let url = '';
+  const data = PORTRAITS[id];
+  if (data) {
+    try {
+      const comma = data.indexOf(',');
+      const mime = data.slice(5, data.indexOf(';'));
+      const bin = atob(data.slice(comma + 1));
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+    } catch { url = data; }
+  }
+  portraitUrls.set(id, url);
+  return url;
 }
-function renderFilters(){
- const prof=['검','창','도끼','활','격투','흑마법','백마법','기마','비행','중장','보병','지휘'];
- $('#filters').innerHTML=`<label>부대 역할<select data-filter="role">${options(C.ROLES,f.role,'모든 역할')}</select></label><label>이번 루트의 최종직<select data-filter="job">${options(D.classes.map(j=>[j.id,j.name]),f.job,'모든 병종')}</select></label><div class="pair"><label>특기<select data-filter="strength">${options(prof,f.strength,'전체')}</select></label><label>약점<select data-filter="weakness">${options(prof,f.weakness,'전체')}</select></label></div><label>역할·특성 태그<input data-filter="tag" value="${esc(f.tag)}" placeholder="예: 필살, 기병 시너지"></label>${button('reset-filters','필터 초기화','class="quiet"')}`;
- $('#quick-filters').innerHTML=['물리','마법','활','기병','비행','중장','힐러'].map(t=>`<button data-quick="${t}" class="${filterTag===t?'active':''}" aria-pressed="${filterTag===t}">${t}</button>`).join('');
+function avatar(c, size = '') {
+  const src = portrait(c.id);
+  return `<span class="avatar ${size}" aria-hidden="true"><span>${e(c.name[0])}</span>${src ? `<img src="${src}" alt="" decoding="async" draggable="false">` : ''}</span>`;
 }
-function matches(c){
- const routes=assigned(c.id),b=getBuild(route,c.id),tags=C.tags(c,state),g=c.growth,skills=[...(c.strengths||[])],text=[c.name,...c.aliases,...tags,c.personal,c.unique,...skills,...(c.weaknesses||[]),b?.roleLabel,jobName(b?.finalClass)].join(' ').toLowerCase();
- if(f.q&&!text.includes(f.q.toLowerCase()))return false;
- if(f.assignment==='current'&&!b||f.assignment==='planned'&&!routes.length||f.assignment==='unassigned'&&routes.length)return false;
- if(f.assignment.startsWith('route:')&&!routes.some(r=>r.id===f.assignment.slice(6)))return false;
- if(f.role&&!C.buildRoles(b||C.blankBuild(c.id)).includes(f.role))return false;
- if(f.job&&b?.finalClass!==f.job||f.strength&&!skills.includes(f.strength)||f.weakness&&!(c.weaknesses||[]).includes(f.weakness))return false;
- if(f.tag&&!tags.some(t=>t.includes(f.tag)))return false;
- const weapons=[b?.primary,b?.secondary],roles=C.buildRoles(b||C.blankBuild(c.id));
- if(filterTag==='물리'&&!(g.str>=40||roles.includes('물리딜')))return false;
- if(filterTag==='마법'&&!(g.mg>=40||roles.includes('마법딜')||weapons.includes('흑마법')))return false;
- if(filterTag==='활'&&!(skills.includes('활')||weapons.includes('활')||roles.includes('활')))return false;
- if(filterTag==='힐러'&&!(skills.includes('백마법')||roles.includes('힐 가능')))return false;
- if(['기병','비행','중장'].includes(filterTag)&&!(b?.movement===filterTag||skills.includes(filterTag==='기병'?'기마':filterTag)))return false;
- return true;
+document.addEventListener('error', ev => { if (ev.target.tagName === 'IMG' && ev.target.closest('.avatar')) ev.target.remove(); }, true);
+
+function traits(text) {
+  const s = safe(text).trim();
+  if (!s || s === '-') return [];
+  return s.split('\n').map(l => l.trim()).filter(Boolean).map(line => {
+    const m = line.match(/^(.+?)\s*[:：]\s*(.*)$/);
+    return m ? { name: m[1], body: m[2] } : { name: line, body: '' };
+  });
 }
-function renderCatalog(){
- const visible=D.characters.filter(c=>C.visible(c,state)),list=visible.filter(matches);
- $('#catalog-count').textContent=`${list.length} / ${visible.length}`;
- $('#character-list').innerHTML=list.length?list.map(c=>{
- const b=getBuild(route,c.id),t=C.tags(c,state),rs=assigned(c.id);
- return `<article class="character-card" draggable="true" data-drag="${c.id}">${avatar(c)}<div class="character-body"><button class="character-name" data-character="${c.id}">${e(c.name)}</button><div class="character-tags">${e(t.slice(0,2).join(' · ')||'성장률·특성 확인')}</div><div class="character-tags">${rs.length?e(rs.map(r=>r.name).join(' / ')):'미배정'}</div></div><div class="card-actions"><button class="add-button ${b?'added':''}" data-${b?'remove':'add'}="${c.id}" title="${b?'편성 취소':'부대에 추가'}" aria-label="${e(c.name)} ${current().name} ${b?'편성 취소':'부대에 추가'}">${b?'✓':'+'}</button><button class="compare-toggle ${compare.includes(c.id)?'active':''}" data-compare="${c.id}" aria-pressed="${compare.includes(c.id)}" aria-label="${e(c.name)} 후보 비교 ${compare.includes(c.id)?'해제':'선택'}">${compare.includes(c.id)?'선택됨':'비교'}</button></div></article>`;
- }).join(''):'<div class="empty">조건에 맞는 캐릭터가 없습니다.<br>검색어나 필터를 바꿔보세요.</div>';
- $('#compare-button').textContent=`후보 비교 ${compare.length}/3`;
- $('#compare-button').disabled=compare.length<2;
+function options(values, value, empty) {
+  return (empty != null ? `<option value="">${esc(empty)}</option>` : '') + values.map(x => {
+    const [v, n] = Array.isArray(x) ? x : [x, x];
+    return `<option value="${esc(v)}"${v === value ? ' selected' : ''}>${e(n)}</option>`;
+  }).join('');
 }
-function renderSquad(){
- const builds=shownBuilds(route),a=C.analyze(builds);
- $('#route-kicker').textContent=`ROUTE 0${D.routes.findIndex(r=>r.id===route)+1} / 나의 부대`;
- $('#squad-title').textContent=current().name+' 부대';$('#squad-count').textContent=a.total;
- const hidden=state.routes[route].length-builds.length;
- $('#squad-summary').innerHTML=`<span><strong>${a.total}</strong>명 편성</span><span><strong>${Object.keys(a.classes).length}</strong>개 최종직</span><span><strong>${a.unconfigured}</strong>명 빌드 설정 중</span>${hidden?`<span>보호 중 ${hidden}명</span>`:''}`;
- $('#squad-list').innerHTML=builds.length?builds.map((b,i)=>{
- const c=chars.get(b.characterId),roles=C.buildRoles(b),cl=b.finalClass?`<button class="link" data-job="${b.finalClass}" data-for="${c.id}">${e(jobName(b.finalClass))}</button>`:'최종직 미정';
- return `<article class="squad-row" draggable="true" data-drag="${c.id}" data-order="${i}"><span class="row-order">${String(i+1).padStart(2,'0')}</span>${avatar(c)}<div class="squad-main"><button class="squad-name" data-character="${c.id}">${e(c.name)}</button><div class="build-line">${e(b.roleLabel||roles.slice(0,2).join(' · ')||'역할 미정')} · ${cl}</div>${b.primary||b.movement?`<div class="character-tags">${e([b.primary,b.secondary,b.movement].filter(Boolean).join(' · '))}</div>`:''}</div><div class="mini-stats" aria-label="힘 ${c.growth.str}, 마력 ${c.growth.mg}, 속도 ${c.growth.spd}"><span>${c.growth.str}</span><span>${c.growth.mg}</span><span>${c.growth.spd}</span></div><div class="row-menu"><div class="row-reorder"><button class="order-button" data-move="${c.id}" data-direction="-1" aria-label="${e(c.name)} 위로" ${i===0?'disabled':''}>⌃</button><button class="order-button" data-move="${c.id}" data-direction="1" aria-label="${e(c.name)} 아래로" ${i===builds.length-1?'disabled':''}>⌄</button></div><button data-character="${c.id}" aria-label="${e(c.name)} 빌드 설정">설정</button><button class="remove" data-remove="${c.id}" aria-label="${e(c.name)} 부대에서 제외">×</button></div></article>`;
- }).join(''):'<div class="empty">아직 편성한 동료가 없습니다.<br>캐릭터 목록의 + 버튼으로 첫 동료를 추가하세요.</div>';
+function missingParts(b) {
+  const m = [];
+  if (!b.roles.length) m.push('역할');
+  if (!b.primary) m.push('무기');
+  if (!b.movement) m.push('이동');
+  if (!b.finalClass) m.push('최종직');
+  return m;
 }
-function bars(counts,total){return Object.entries(counts).map(([n,v])=>`<div class="bar-row"><span>${n}</span><div class="bar"><i style="width:${total?v/total*100:0}%"></i></div><strong>${v}</strong></div>`).join('');}
-function renderStats(){
- const a=C.analyze(shownBuilds(route)),groups=Object.entries(a.classes).sort((a,b)=>b[1].length-a[1].length);
- $('#stats').innerHTML=`<div class="panel-heading"><h2>부대 구성</h2><span class="tag accent">실시간</span></div><section class="stat-section"><div class="stat-head"><h3>역할 분포</h3><span>복수 집계</span></div>${bars(a.roles,a.total)}<p class="subtle">역할 미정 ${a.missing.roles}명</p></section><section class="stat-section"><div class="stat-head"><h3>무기 구성</h3><span>주·보조 합산</span></div><div class="weapon-grid">${Object.entries(a.weapons).map(([n,v])=>`<div class="weapon-count"><strong>${v}</strong>${n}</div>`).join('')}</div><p class="subtle" style="margin:12px 0 0">무기 미정 ${a.missing.weapons}명</p></section><section class="stat-section"><div class="stat-head"><h3>이동 타입</h3><span>미정 ${a.missing.movement}명</span></div>${bars(a.movement,a.total)}</section><section class="stat-section"><div class="stat-head"><h3>최종직 구성</h3><span>미정 ${a.missing.classes}명</span></div>${groups.length?groups.map(([id,ids])=>`<div class="class-count"><div class="class-top"><button class="link" data-job="${id}">${e(jobName(id))}</button><span class="${ids.length>=2?'repeat':''}">×${ids.length}${ids.length>=2?' 중복':''}</span></div><p>${ids.map(id=>e(chars.get(id).name)).join(' · ')}</p></div>`).join(''):'<p class="empty compact">최종직을 지정하면 직업별 인원과<br>중복을 여기에서 확인할 수 있습니다.</p>'}${Object.entries(a.roles).filter(([r,n])=>n>=4).map(([r,n])=>`<div class="info-strip"><span class="repeat">역할 중복</span> ${r} ${n}명</div>`).join('')}<p class="subtle" style="margin:12px 0 0">최종직 2명 이상 · 역할 4명 이상 표시.<br>중복은 구성 정보이며 우열 평가가 아닙니다.</p></section>`;
-}
-function renderOverview(){
- const counts=Object.fromEntries(D.routes.map(r=>[r.id,C.analyze(shownBuilds(r.id))]));
- const visible=D.characters.filter(c=>C.visible(c,state)),over=visible.filter(c=>assigned(c.id).length>1),unused=visible.filter(c=>!assigned(c.id).length);
- const metrics=[['인원',a=>a.total],...C.ROLES.map(r=>[r,a=>a.roles[r]]),...C.MOVEMENTS.map(r=>[r,a=>a.movement[r]])];
- $('#overview-view').innerHTML=`<div class="overview-cards">${D.routes.map(r=>`<article class="panel overview-card" style="--route:${r.color}"><h2>${r.name} 루트</h2><div class="big">${counts[r.id].total}<small>명</small></div><p class="subtle">빌드 설정 중 ${counts[r.id].unconfigured}명</p><button data-route="${r.id}" class="quiet">편성 열기 →</button></article>`).join('')}</div><div class="overview-grid"><div><section class="panel overview-section"><h2>루트별 역할·이동 비교</h2><p class="subtle">직접 설정한 역할과 이동 타입만 집계합니다.</p><div class="table-scroll"><table class="comparison-table"><thead><tr><th>구성</th>${D.routes.map(r=>`<th>${r.name}</th>`).join('')}</tr></thead><tbody>${metrics.map(([n,fn])=>`<tr><th>${n}</th>${D.routes.map(r=>`<td>${fn(counts[r.id])}</td>`).join('')}</tr>`).join('')}</tbody></table></div></section><section class="panel overview-section"><h2>미배정 캐릭터 <span class="count">${unused.length}</span></h2><p class="subtle">현재 공개 범위에서 어느 루트에도 배치하지 않은 동료</p><div class="name-list">${unused.map(c=>`<button data-character="${c.id}">${e(c.name)} +</button>`).join('')||'<p class="subtle">모든 동료가 하나 이상의 루트에 배치되어 있습니다.</p>'}</div></section></div><section class="panel overview-section"><h2>여러 루트에 함께하는 동료 <span class="count">${over.length}</span></h2><p class="subtle">같은 캐릭터도 루트별로 다른 빌드를 저장합니다.</p>${over.map(c=>`<div class="overlap-row"><button class="link" data-character="${c.id}">${e(c.name)}</button><span>${assigned(c.id).map(r=>r.name).join(' / ')}</span></div>`).join('')||'<p class="empty">중복 배치한 캐릭터가 없습니다.</p>'}</section></div>`;
-}
-function render(){
- setTheme();renderRoutes();renderCatalog();renderSquad();renderStats();if(view==='overview')renderOverview();
- $('#spoiler-status').textContent=state.settings.spoilers?'◇ 전체 캐릭터 공개':'◇ 2부까지 공개';
- $('#data-version').textContent=`자료 기준 ${D.version}`;
- $('#save-status').textContent=storageError?'저장 확인 필요':state.updatedAt?'자동 저장됨':'초기 편성 · 자동 저장';
-}
-function setView(v){view=v;$('#planner-view').hidden=v!=='planner';$('#overview-view').hidden=v!=='overview';$('.mobile-tabs').hidden=v!=='planner';$('#route-tabs').hidden=v!=='planner';$$('[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===v));$('#page-title').textContent=v==='planner'?'다음 전투를 위한 편성':'네 번의 여정, 한눈에';$('#page-description').textContent=v==='planner'?'마음에 드는 동료를 모으고, 루트마다 새로운 빌드를 만들어보세요.':'중복으로 육성할 동료와 루트마다 달라지는 구성을 비교하세요.';render();}
-function setPane(p){pane=p;$('#planner-view').dataset.pane=p;$$('[data-pane]').filter(b=>b.tagName==='BUTTON').forEach(b=>b.classList.toggle('active',b.dataset.pane===p));}
-function add(id,r=route){if(!isVisible(id)||getBuild(r,id))return;state.routes[r].push(C.blankBuild(id));save();render();toast(`${chars.get(id).name} · ${D.routes.find(x=>x.id===r).name} 부대에 추가했습니다.`);}
-function remove(id,r=route){if(!getBuild(r,id))return;undoState=C.clone(state);state.routes[r]=state.routes[r].filter(b=>b.characterId!==id);save();render();if($('#detail-dialog').open)renderDetail();toast(`${D.routes.find(x=>x.id===r).name} 부대에서 제외했습니다.`,true);}
-function move(id,delta){const list=state.routes[route],a=list.findIndex(b=>b.characterId===id),b=a+delta;if(a<0||b<0||b>=list.length)return;[list[a],list[b]]=[list[b],list[a]];save();renderSquad();}
-function showDialog(id){const d=$(id);if(!d.open)d.showModal();}
-function closeDialog(d){if(d?.open)d.close();}
-function traitDetails(c){return `<div class="traits">${[['개인 특성',c.personal],['유니크 특성',c.unique]].map(([n,t])=>{const value=safe(t);return `<details><summary><span>${n}</span>${e(value==='-'?'없음':value.split(/[:：\n]/)[0]||'미수록')}</summary><p>${e(value==='-'?'자료에 기재된 특성 없음':value||'미수록')}</p></details>`;}).join('')}</div>`;}
-function growthTable(c,j=null){return `<table class="growth-table"><thead><tr><th>능력치</th><th>캐릭터 %</th>${j?'<th>병종 %p</th><th>합산 %</th>':'<th>성장 경향</th>'}</tr></thead><tbody>${C.STATS.map(([k,n])=>`<tr><th>${n}</th><td class="value">${c.growth[k]??'—'}%</td>${j?`<td>${fmt(j.growth[k])}</td><td>${c.growth[k]!=null&&j.growth[k]!=null?c.growth[k]+j.growth[k]:'—'}</td>`:`<td><span class="growth-mini-bar"><i style="width:${Math.min(100,c.growth[k]||0)}%"></i></span></td>`}</tr>`).join('')}</tbody></table>`;}
-function renderDetail(){
- const c=chars.get(detailId);if(!c||!C.visible(c,state)){closeDialog($('#detail-dialog'));return;}
- const b=getBuild(detailRoute,c.id),rs=assigned(c.id),tags=C.tags(c,state);
- $('#detail-dialog').innerHTML=`<div class="dialog-head"><div><p class="eyebrow">CHARACTER / 동료 정보</p><h2 id="detail-title">${e(c.name)}</h2></div><button class="icon-button" data-close="detail-dialog" aria-label="캐릭터 상세 닫기">×</button></div><div class="dialog-body detail-layout"><section><div class="detail-identity">${avatar(c)}<div><p>${rs.length?rs.map(r=>r.name).join(' · '):'아직 배정된 루트가 없습니다'}</p><div class="chips">${tags.map(t=>`<span class="tag accent">${e(t)}</span>`).join('')}</div></div></div><h3>캐릭터 성장률</h3>${growthTable(c)}<p class="subtle">성장률만으로 강함을 평가하지 않습니다.</p><div class="section-label">개인·유니크 특성</div>${traitDetails(c)}<div class="aptitudes"><div class="aptitude"><strong>특기</strong>${e(c.strengths===null?'미수록':c.strengths.join(' · ')||'기재된 항목 없음')}</div><div class="aptitude"><strong>약점</strong>${e(c.weaknesses===null?'미수록':c.weaknesses.join(' · ')||'기재된 항목 없음')}</div></div><p class="subtle" style="margin-top:8px">적성: 보완 자료에 기재된 항목만 표시</p><details class="tag-editor"><summary class="subtle">자동 태그 수정 / 생성 기준</summary><label class="field">태그 (쉼표로 구분)<input id="tag-edit" value="${esc(tags.join(', '))}" maxlength="2400"></label><div class="inline-actions">${button('save-tags','태그 저장')}${button('reset-tags','자동 태그 복원','class="quiet"')}</div><p class="rule-list">힘≥35·속도≥50: 고속 물리 / 힘≥40·수비≥40: 물리 딜탱 / 마력≥45: 마법 딜러 / 마방≥45: 마법탱 / 힘·마력≥35: 하이브리드 / 기술≥50: 고기술·필살형 / 매력≥45: 지원형.<br>시너지 태그는 특성 설명의 키워드로 생성하며 실제 발동 조건은 원문을 확인하세요.</p></details><div class="inline-actions" style="margin-top:16px"><button data-compare="${c.id}">${compare.includes(c.id)?'비교 선택 해제':'후보 비교에 추가'}</button>${button('compare','비교 보기',compare.length<2?'disabled':'')}</div></section><section class="build-panel"><h3>루트별 육성 빌드</h3><p class="subtle">이 루트에서만 사용하는 역할과 전직 계획입니다.</p><div class="detail-route-tabs">${D.routes.map(r=>`<button data-detail-route="${r.id}" class="${r.id===detailRoute?'active':''}" aria-pressed="${r.id===detailRoute}">${r.name}${getBuild(r.id,c.id)?' ✓':''}</button>`).join('')}</div>${b?buildForm(b):`<div class="empty">${D.routes.find(r=>r.id===detailRoute).name} 부대에 아직 없습니다.<br>추가한 뒤 이 루트의 빌드를 설정하세요.</div><button class="primary" data-detail-add="${c.id}" style="width:100%">이 부대에 추가</button>`}</section></div><div class="dialog-foot"><span>성장률·특성: cass07 / 적성: redfreshet</span><button data-close="detail-dialog">완료</button></div>`;
- const panel=$('#detail-dialog .build-panel');
- if(b)panel.insertAdjacentHTML('beforeend',`<button class="danger" data-detail-remove="${c.id}">이 루트에서 편성 취소</button>`);
- else if(undoState?.routes[detailRoute]?.some(x=>x.characterId===c.id))panel.insertAdjacentHTML('beforeend',`<div style="margin-top:12px">${button('undo','방금 제외 되돌리기')}</div>`);
-}
-function buildForm(b){
- return `<label class="field">내가 정한 역할 이름<input data-build="roleLabel" value="${esc(b.roleLabel)}" maxlength="150" placeholder="예: 마법 타조 / 전열 지원"></label><div class="field">집계할 역할 · 여러 개 선택</div><div class="role-options">${C.ROLES.map(r=>`<label><input type="checkbox" data-role="${r}" ${b.roles.includes(r)?'checked':''}>${r}</label>`).join('')}</div><p class="subtle">메인 힐러는 힐 가능, 활 역할은 원거리에도 포함됩니다.</p><div class="form-grid"><label class="field">주무기<select data-build="primary">${weaponOptions(b,'primary')}</select></label><label class="field">보조무기<select data-build="secondary">${weaponOptions(b,'secondary')}</select></label><label class="field">이동 타입<select data-build="movement">${options(C.MOVEMENTS,b.movement)}</select></label><label class="field">최종직<select data-build="finalClass">${options(D.classes.map(j=>[j.id,j.name]),b.finalClass)}</select></label></div><div id="build-job-actions">${buildJobActions(b)}</div><label class="field">중간 전직 경로<input data-build="path" value="${esc(b.path)}" maxlength="3000" placeholder="병사 → 기갑 타조병 → 가디언 → 홀리 랜서"></label><div id="path-links" class="path-links">${pathLinks(b.path)}</div><label class="field">육성 메모<textarea data-build="notes" maxlength="20000" rows="4" placeholder="우선 훈련할 적성, 장비, 이번 회차의 목표…">${esc(b.notes)}</textarea></label><p class="subtle">입력한 내용은 즉시 자동 저장됩니다.</p>`;
-}
-function weaponOptions(b,field){
- const available=C.classWeapons(jobs.get(b.finalClass)),value=b[field];
- return options(available,value,field==='secondary'?'없음 / 미정':'미정')+(value&&!available.includes(value)?`<option value="${esc(value)}" selected disabled>${e(value)} · 기존 설정 (사용 불가)</option>`:'');
-}
-function buildJobActions(b){
- const j=jobs.get(b.finalClass),invalid=[b.primary,b.secondary].filter(w=>w&&!C.classWeapons(j).includes(w));
- return `<div class="inline-actions">${button('browse-classes','병종 찾아보기')}${undoState?button('undo','최근 편성 변경 되돌리기','class="quiet"'):''}${j?`<button data-job="${j.id}" data-for="${b.characterId}">병종 수치·조건 보기</button>`:''}</div><p class="subtle" style="margin:8px 0 18px">${j?(j.weapons.length?'이 병종의 사용 가능 무기에서 주·보조무기를 선택하세요.':'사용 무기 자료가 없어 모든 무기를 표시합니다.'):'병종을 선택하면 최종직·이동 타입이 자동 적용됩니다.'}${invalid.length?'<br>기존 무기 중 사용 불가: '+e(invalid.join(' · '))+'. 새 무기를 선택해주세요.':''}<br>집계 역할은 직접 지정합니다.</p>`;
-}
-function selectClass(id){
- const b=getBuild(detailRoute,detailId),j=jobs.get(id);if(!b||!$('#detail-dialog').open||(id&&!j))return;
- undoState=C.clone(state);const cleared=C.applyClass(b,j);
- const scroll=$('#detail-dialog .dialog-body').scrollTop;
- closeDialog($('#class-dialog'));closeDialog($('#utility-dialog'));
- save();render();renderDetail();$('#detail-dialog .dialog-body').scrollTop=scroll;
- $('#detail-dialog [data-build="primary"]').focus({preventScroll:true});
- toast(`${j?j.name+' · 최종직과 이동 타입을 적용했습니다.':'최종직과 이동 타입을 미정으로 바꿨습니다.'}${cleared.length?' 사용 불가 무기는 미정으로 변경했습니다.':''}`,true);
-}
-function pathLinks(path){return path.split(/→|->|,|＞|>/).map(n=>{const j=D.classes.find(j=>j.name.replace(/\s/g,'')===n.trim().replace(/\s/g,''));return j?`<button data-job="${j.id}" data-for="${detailId}">${e(j.name)} ↗</button>`:'';}).join('');}
-function openDetail(id){if(!isVisible(id))return;detailId=id;detailRoute=route;renderDetail();showDialog('#detail-dialog');}
-function showClass(id,forId){
- const j=jobs.get(id);if(!j)return;const c=chars.get(forId)||($('#detail-dialog').open?chars.get(detailId):null),allowed=c&&C.visible(c,state)?c:null;
- $('#class-dialog').innerHTML=`<div class="dialog-head"><div><p class="eyebrow">CLASS / ${e(j.tier)}</p><h2 id="class-title">${e(j.name)}</h2></div><button class="icon-button" data-close="class-dialog" aria-label="병종 정보 닫기">×</button></div><div class="dialog-body"><div class="class-facts"><div class="fact"><span>이동 타입</span>${e(j.movementType||'미수록')}</div><div class="fact"><span>기본 이동력 / 이동 보정</span>${j.movement??'미수록'} / ${fmt(j.movementBonus)}</div><div class="fact"><span>사용 가능 무기·마법</span>${e(j.weapons.join(' · ')||'자료에 미기재')}</div></div><p class="subtle">이동력은 캐릭터 특성·장비를 제외한 보완 자료 값입니다. 보정치와 구분해 확인하세요.</p><h3>${allowed?e(allowed.name)+'와 성장률 비교':'병종 성장률·능력치 보정'}</h3>${allowed?growthTable(allowed,j):''}<table class="growth-table" style="margin-top:14px"><thead><tr><th>능력치</th><th>병종 성장률 %p</th><th>실제 능력치 보정</th></tr></thead><tbody>${C.STATS.map(([k,n])=>`<tr><th>${n}</th><td>${fmt(j.growth[k])}</td><td>${fmt(j.modifiers?.[k])}</td></tr>`).join('')}</tbody></table><p class="subtle">성장률 보정은 레벨 성장에, 능력치 보정은 해당 병종의 능력치에 적용되는 서로 다른 수치입니다.</p><div class="section-label">전직 요구 조건</div><p class="class-skills">${e(j.requirements||'미수록')}${j.restrictions?'\n'+e(j.restrictions):''}</p><div class="section-label">마스터 스킬</div><p class="class-skills">${e(j.master||'미수록')}</p><details><summary class="subtle">병종 스킬 펼치기</summary><p class="class-skills">${e(j.skills.join('\n')||'자료에 기재된 항목 없음')}</p></details><p class="subtle" style="margin-top:18px">조건과 수치: cass07 · 사용 무기와 이동 타입: redfreshet.<br>자료가 상충할 수 있어 전직 직전에는 게임 화면을 확인하세요.</p></div><div class="dialog-foot"><span>스토리 해금 조건은 표시하지 않습니다.</span>${allowed?.id===detailId&&$('#detail-dialog').open&&getBuild(detailRoute,detailId)?`<button class="primary" data-select-class="${j.id}">${e(D.routes.find(r=>r.id===detailRoute).name)} · 이 병종 선택</button>`:''}<button data-close="class-dialog">닫기</button></div>`;
- showDialog('#class-dialog');
-}
-function utility(title,body,foot=''){$('#utility-dialog').innerHTML=`<div class="dialog-head"><h2 id="utility-title">${title}</h2><button class="icon-button" data-close="utility-dialog" aria-label="닫기">×</button></div><div class="dialog-body">${body}</div>${foot?`<div class="dialog-foot">${foot}</div>`:''}`;showDialog('#utility-dialog');}
-function settings(){utility('백업 및 설정',`<section class="settings-section"><h3>스포일러 보호</h3><p>기본 공개: 1·2부 합류가 확인된 인물과 Excel 명단. 합류 시점 미확인 인물도 숨깁니다. 스토리 설명과 신장직은 앱에 표시하지 않습니다.</p><label><input id="spoilers-toggle" type="checkbox" ${state.settings.spoilers?'checked':''}>전체 캐릭터 공개</label><p>공개를 해제하면 후반 인물의 이름이 나타날 수 있습니다. 다시 보호해도 기존 편성과 메모는 보존됩니다.</p></section><section class="settings-section"><h3>편성 백업</h3><p>루트별 빌드, 메모, 수정한 태그, 테마를 JSON 파일로 옮길 수 있습니다. 불러오기는 미리보기 후 적용됩니다.</p><div class="inline-actions">${button('export','↓ 데이터 내보내기','class="primary"')}${button('import','↑ 데이터 불러오기')}${corruptBackup?button('export-corrupt','복구용 저장 원본 내보내기'):''}</div><p>자동 저장: ${state.updatedAt?e(new Date(state.updatedAt).toLocaleString('ko-KR')):'아직 편집하지 않음'}</p></section><section class="settings-section"><h3>화면 모드</h3><button data-action="theme">${state.settings.theme==='dark'?'라이트 모드로 전환':'다크 모드로 전환'}</button></section><h3>초기 편성</h3><p>Excel 명단으로 되돌립니다. 직접 작성한 빌드와 메모는 사라집니다. 먼저 JSON으로 백업해주세요.</p>${button('reset-confirm','초기 편성으로 되돌리기','class="danger"')}`);}
-function exportFile(value,name){const blob=new Blob([typeof value==='string'?value:JSON.stringify(value,null,2)],{type:'application/json;charset=utf-8'}),u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),1000);}
-function exportState(){exportFile({...state,exportedAt:new Date().toISOString()},`만자천홍-편성-${new Date().toISOString().slice(0,10)}.json`);toast('편성 백업 파일을 내보냈습니다.');}
-function sources(){utility('자료 안내',`<p>게임을 하며 빠르게 확인하기 위한 개인용 플래너입니다. 캐릭터·병종 이름은 한국어 자료원 표기를 우선합니다.</p><ul class="source-list"><li><a href="https://cass07.github.io/fe18-db/" target="_blank" rel="noopener noreferrer">cass07 · 만자천홍 데이터베이스</a><br>캐릭터 성장률, 개인·유니크 특성, 병종 성장률, 능력치 보정, 전직 요구치, 마스터 스킬</li><li><a href="https://redfreshet.com/game-tools/fe-banshisenko/" target="_blank" rel="noopener noreferrer">redfreshet · FE万紫千紅 攻略ツール</a><br>특기·약점, 병종의 사용 가능 무기, 이동 타입·이동력, 1·2부 합류 여부</li><li><a href="https://fefw.azaws.workers.dev/" target="_blank" rel="noopener noreferrer">만자천홍 육성 도감 · 초상화</a><br>기본 공개 범위 52명의 초기 초상화. 후반 모습으로 전환하지 않습니다. 이미지가 없거나 로딩에 실패하면 이름 첫 글자를 표시합니다.</li><li>파엠.xlsx · Sheet1<br>각 열의 첫 셀을 루트 주인공으로 포함. 카이 11명 / 디트리히 13명 / 세오도라 11명 / 레다 8명. 역할과 직업은 Excel에 없어 미정으로 시작합니다.</li></ul><p class="info-strip">자료 기준: ${D.version}. 자료원 링크는 외부 사이트의 스포일러 제한을 보장하지 않습니다.</p><h3>자동 집계 기준</h3><p>캐릭터의 참고 태그와 편성 역할은 별개입니다. 역할은 복수 선택, 무기는 주·보조에서 같은 종류를 한 명당 한 번, 이동 타입·최종직은 한 개씩 집계합니다. 메인 힐러는 힐 가능, 활 역할은 원거리에도 포함됩니다.</p><p>성장률 태그는 수치 기준, 시너지 태그는 특성 키워드로 생성합니다. 수정은 캐릭터 전체에 적용되며 루트별 역할은 따로 저장됩니다. 필터의 물리·마법은 성장률 40 이상 또는 지정 역할, 활·이동·힐러는 특기 또는 지정 빌드를 참고합니다.</p><h3>자료 한계</h3><p>빈 값은 미수록으로 표시합니다. 전직 가능 여부나 습득 마법을 자동 확정하지 않습니다. 사용 무기·이동력 보완 자료와 주 자료원의 불일치가 있을 수 있습니다. 플레이 전에 게임 내 수치를 확인해주세요.</p><h3>저장</h3><p>서버 전송 없이 이 브라우저에만 자동 저장합니다. 브라우저·기기·실행 주소가 달라지면 저장소가 달라지므로 JSON 백업을 이용하세요. 파일 직접 열기에서도 동작하지만 브라우저별 저장 정책은 다를 수 있습니다.</p>`);}
-function showComparison(){
- compare=compare.filter(isVisible);if(compare.length<2){toast('비교할 캐릭터를 2명 이상 선택해주세요.');return;}
- utility('후보 캐릭터 비교',`<p class="subtle">캐릭터의 원래 성장률을 나란히 확인합니다. 병종 보정과 부대 역할은 포함하지 않습니다.</p><div class="compare-grid" style="grid-template-columns:repeat(${compare.length},minmax(0,1fr))">${compare.map(id=>{const c=chars.get(id);return `<section class="candidate"><h3>${e(c.name)}</h3><div class="chips" style="margin-bottom:14px">${C.tags(c,state).map(t=>`<span class="tag">${e(t)}</span>`).join('')}</div>${growthTable(c)}<p class="subtle" style="margin-top:12px">특기: ${e(c.strengths?.join(' · ')||'기재된 항목 없음')}<br>약점: ${e(c.weaknesses?.join(' · ')||'기재된 항목 없음')}</p>${traitDetails(c)}<button data-add="${id}" ${getBuild(route,id)?'disabled':''} style="margin-top:12px">${current().name} ${getBuild(route,id)?'배정됨':'부대에 추가'}</button></section>`;}).join('')}</div>`,`${button('clear-compare','비교 선택 초기화')}<button data-close="utility-dialog">닫기</button>`);
-}
-function browseClasses(){
- utility('병종 찾아보기',`<p class="subtle">${e(chars.get(detailId)?.name)} · ${e(D.routes.find(r=>r.id===detailRoute).name)} 루트의 최종직을 고르세요. 선택하면 이동 타입도 적용됩니다.</p>${[1,2,3,4,5].map(rank=>`<h3>${D.classes.find(j=>j.rank===rank)?.tier||''}</h3><div class="class-picker">${D.classes.filter(j=>j.rank===rank).map(j=>`<div class="class-picker-row"><div><strong>${e(j.name)}</strong><small>${e(j.movementType||'이동 미수록')} · ${e(j.weapons.join(' · ')||'무기 미수록')}</small></div><div class="inline-actions"><button data-job="${j.id}" data-for="${detailId||''}" aria-label="${e(j.name)} 정보">정보</button><button class="primary" data-select-class="${j.id}" aria-label="${e(j.name)} 선택">선택</button></div></div>`).join('')}</div>`).join('')}`);
+function dupes(a) {
+  const out = [];
+  for (const [id, ids] of Object.entries(a.classes)) if (ids.length >= DUP.job) out.push({ label: jobName(id), n: ids.length });
+  for (const [k, n] of Object.entries(a.roles)) if (n >= DUP.role) out.push({ label: k, n });
+  for (const [k, n] of Object.entries(a.weapons)) if (n >= DUP.weapon) out.push({ label: k, n });
+  return out;
 }
 
-document.addEventListener('click',ev=>{
- const b=ev.target.closest('button');if(!b||b.disabled)return;
- if(b.dataset.close){closeDialog(document.getElementById(b.dataset.close));return;}
- if(b.dataset.view){setView(b.dataset.view);return;}
- if(b.dataset.route){route=b.dataset.route;setView('planner');return;}
- if(b.dataset.pane){setPane(b.dataset.pane);return;}
- if(b.dataset.character){openDetail(b.dataset.character);return;}
- if(b.dataset.add){add(b.dataset.add);if($('#utility-dialog').open&&compare.length>=2&&$('#utility-title').textContent==='후보 캐릭터 비교')showComparison();return;}
- if(b.dataset.remove){remove(b.dataset.remove);return;}
- if(b.dataset.move){move(b.dataset.move,Number(b.dataset.direction));return;}
- if(b.dataset.compare){const id=b.dataset.compare;if(compare.includes(id))compare=compare.filter(x=>x!==id);else if(compare.length<3)compare.push(id);else{toast('후보는 한 번에 3명까지 비교할 수 있습니다.');return;}renderCatalog();if($('#detail-dialog').open)renderDetail();return;}
- if(b.dataset.detailRoute){detailRoute=b.dataset.detailRoute;renderDetail();return;}
- if(b.dataset.detailAdd){add(b.dataset.detailAdd,detailRoute);renderDetail();return;}
- if(b.dataset.detailRemove){remove(b.dataset.detailRemove,detailRoute);return;}
- if(b.dataset.selectClass){selectClass(b.dataset.selectClass);return;}
- if(b.dataset.job){showClass(b.dataset.job,b.dataset.for);return;}
- if(b.dataset.quick){filterTag=filterTag===b.dataset.quick?'':b.dataset.quick;renderFilters();renderCatalog();return;}
- const action=b.dataset.action;
- if(action==='theme'){state.settings.theme=state.settings.theme==='dark'?'light':'dark';save();setTheme();if($('#utility-dialog').open&&$('#utility-title').textContent==='백업 및 설정')settings();}
- else if(action==='settings')settings();
- else if(action==='undo')undo();
- else if(action==='sources')sources();
- else if(action==='export')exportState();
- else if(action==='export-corrupt')exportFile(corruptBackup,'만자천홍-저장원본-복구용.json');
- else if(action==='import'){$('#import-file').value='';$('#import-file').click();}
- else if(action==='compare')showComparison();
- else if(action==='clear-compare'){compare=[];renderCatalog();closeDialog($('#utility-dialog'));if($('#detail-dialog').open)renderDetail();}
- else if(action==='browse-classes')browseClasses();
- else if(action==='focus-search'){setPane('catalog');$('#search').focus();$('#catalog').scrollIntoView({behavior:'smooth',block:'start'});}
- else if(action==='filters'){$('#filters').hidden=!$('#filters').hidden;b.setAttribute('aria-expanded',String(!$('#filters').hidden));}
- else if(action==='reset-filters'){Object.keys(f).forEach(k=>f[k]=k==='assignment'?'all':'');filterTag='';$('#search').value='';$('#assignment-filter').value='all';renderFilters();renderCatalog();}
- else if(action==='save-tags'){const t=$('#tag-edit').value.split(',').map(s=>s.trim()).filter(Boolean);if(t.length>30||t.some(t=>t.length>80)){toast('태그는 30개, 태그 하나는 80자까지 저장할 수 있습니다.');return;}state.characterTags[detailId]=[...new Set(t)];save();render();renderDetail();toast('캐릭터 태그를 저장했습니다.');}
- else if(action==='reset-tags'){delete state.characterTags[detailId];save();render();renderDetail();}
- else if(action==='reset-confirm')utility('초기 편성으로 되돌릴까요?','<p>현재 빌드·메모·수정 태그를 지우고 Excel의 명단으로 되돌립니다.</p><p>필요하다면 먼저 현재 편성을 내보내주세요.</p>',`${button('export','현재 편성 내보내기')}${button('reset-apply','초기화 적용','class="danger"')}`);
- else if(action==='reset-apply'){undoState=C.clone(state);state=C.initial(D);corruptBackup=null;save();compare=[];closeDialog($('#utility-dialog'));closeDialog($('#detail-dialog'));render();toast('초기 편성으로 되돌렸습니다.',true);}
- else if(action==='spoilers-confirm'){state.settings.spoilers=true;save();render();settings();}
- else if(action==='import-apply'&&pendingImport){undoState=C.clone(state);state=pendingImport;pendingImport=null;state.settings.spoilers=false;corruptBackup=null;compare=[];detailId=null;closeDialog($('#detail-dialog'));closeDialog($('#class-dialog'));closeDialog($('#utility-dialog'));save();render();toast('백업을 불러왔습니다. 스포일러 보호는 켜진 상태입니다.');}
+/* ---------- persistence ---------- */
+let saveTimer = 0;
+function setStatus(text, bad = false) {
+  const el = $('#save-status');
+  el.textContent = text;
+  el.classList.toggle('bad', bad);
+}
+function persist() {
+  clearTimeout(saveTimer);
+  saveTimer = 0;
+  state.updatedAt = new Date().toISOString();
+  if (corruptBackup) { setStatus('임시 편집 중', true); return; }
+  try {
+    localStorage.setItem(KEY, JSON.stringify(state));
+    storageError = false;
+    setStatus('저장됨');
+  } catch {
+    storageError = true;
+    setStatus('저장 실패', true);
+  }
+  renderBanner();
+}
+function persistSoon() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(persist, 300);
+}
+addEventListener('pagehide', () => { if (saveTimer) persist(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden && saveTimer) persist(); });
+addEventListener('storage', ev => {
+  if (ev.key !== KEY || !ev.newValue || corruptBackup) return;
+  try {
+    state = C.validateState(JSON.parse(ev.newValue), D);
+    render();
+    toast('다른 탭에서 바뀐 편성을 불러왔습니다.');
+  } catch { /* keep current */ }
 });
-document.addEventListener('input',ev=>{
- const t=ev.target;
- if(t.id==='search'){f.q=t.value;renderCatalog();}
- if(t.dataset.filter){f[t.dataset.filter]=t.value;renderCatalog();}
- if(t.dataset.build&&t.tagName!=='SELECT'){const b=getBuild(detailRoute,detailId);if(!b)return;b[t.dataset.build]=t.value;save();renderSquad();renderCatalog();if(t.dataset.build==='path')$('#path-links').innerHTML=pathLinks(b.path);}
+
+function snapshot() { ui.undo = C.clone(state); }
+function undo() {
+  if (!ui.undo) return;
+  state = ui.undo;
+  ui.undo = null;
+  persist();
+  render();
+  toast('되돌렸습니다.');
+}
+
+let toastTimer;
+function toast(msg, withUndo = false) {
+  const t = $('#toast');
+  t.innerHTML = `<span>${esc(msg)}</span>${withUndo && ui.undo ? '<button data-act="undo">되돌리기</button>' : ''}`;
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.hidden = true; }, withUndo ? 7000 : 2600);
+}
+
+/* ---------- mutations ---------- */
+function add(id, r = ui.route) {
+  if (!isVisible(id) || getBuild(r, id)) return;
+  state.routes[r].push(C.blankBuild(id));
+  persist();
+  render();
+  toast(`${chars.get(id).name} → ${routes.get(r).name} 부대에 추가`);
+}
+function remove(id, r = ui.route) {
+  if (!getBuild(r, id)) return;
+  snapshot();
+  state.routes[r] = state.routes[r].filter(b => b.characterId !== id);
+  persist();
+  render();
+  toast(`${chars.get(id).name} · ${routes.get(r).name} 부대에서 제외`, true);
+}
+// Reorder only the visible builds; builds hidden by spoiler protection keep their slots.
+function setVisibleOrder(r, ids) {
+  const list = state.routes[r];
+  const byId = new Map(list.map(b => [b.characterId, b]));
+  const vis = new Set(ids);
+  let k = 0;
+  state.routes[r] = list.map(b => vis.has(b.characterId) ? byId.get(ids[k++]) : b);
+}
+function moveBy(id, delta, r = ui.route) {
+  const ids = shown(r).map(b => b.characterId);
+  const i = ids.indexOf(id), j = i + delta;
+  if (i < 0 || j < 0 || j >= ids.length) return;
+  [ids[i], ids[j]] = [ids[j], ids[i]];
+  setVisibleOrder(r, ids);
+  persist();
+  render();
+}
+function insertAt(id, beforeId) {
+  if (!isVisible(id)) return;
+  const existing = getBuild(ui.route, id);
+  if (existing && !beforeId) return;
+  if (!existing) {
+    state.routes[ui.route].push(C.blankBuild(id));
+    toast(`${chars.get(id).name} → ${cur().name} 부대에 추가`);
+  }
+  if (beforeId && beforeId !== id) {
+    const ids = shown(ui.route).map(b => b.characterId).filter(x => x !== id);
+    const k = ids.indexOf(beforeId);
+    ids.splice(k < 0 ? ids.length : k, 0, id);
+    setVisibleOrder(ui.route, ids);
+  }
+  persist();
+  render();
+}
+function selectClass(id) {
+  const b = drawerBuild();
+  if (!b) return;
+  const j = id ? jobs.get(id) : null;
+  if (id && !j) return;
+  snapshot();
+  const cleared = C.applyClass(b, j);
+  persist();
+  closeModal();
+  render();
+  toast(j
+    ? `${j.name} 선택 · 이동 ${b.movement || '미정'}${cleared.length ? ` · 쓸 수 없는 ${cleared.join('·')} 해제` : ''}`
+    : '최종직을 비웠습니다.', true);
+}
+function appendPath(id) {
+  const b = drawerBuild(), j = jobs.get(id);
+  if (!b || !j) return;
+  const path = b.path.trim();
+  b.path = (path ? `${path} → ${j.name}` : j.name).slice(0, 3000);
+  persist();
+  closeModal();
+  render();
+}
+function toggleCompare(id) {
+  if (ui.compare.includes(id)) ui.compare = ui.compare.filter(x => x !== id);
+  else if (ui.compare.length < 3) ui.compare.push(id);
+  else { toast('비교는 3명까지 할 수 있습니다.'); return; }
+  renderList();
+  renderDrawer();
+  if (ui.modal?.kind === 'compare') ui.compare.length ? renderModal() : closeModal();
+}
+
+/* ---------- render: chrome ---------- */
+function applyTheme() {
+  const dark = state.settings.theme === 'dark';
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  $('meta[name="theme-color"]').content = dark ? '#171a20' : '#ffffff';
+  $('#theme-btn').innerHTML = dark ? I.sun : I.moon;
+  document.documentElement.style.setProperty('--route', cur().color);
+}
+function renderBanner() {
+  const b = $('#banner');
+  let msg = '';
+  if (corruptBackup) msg = '저장된 편성을 읽지 못해 초기 편성으로 열었습니다. 원본은 그대로 보존되어 있습니다.';
+  else if (storageError) msg = '이 브라우저에 저장할 수 없습니다. 마치기 전에 데이터를 내보내주세요.';
+  b.hidden = !msg;
+  b.innerHTML = msg ? `<span>${msg}</span><button class="btn sm" data-act="settings">백업 열기</button>` : '';
+}
+function renderRoutes() {
+  $('#route-tabs').innerHTML = D.routes.map(r => `<button class="route-tab" data-act="route" data-route="${r.id}" style="--c:${r.color}" aria-pressed="${r.id === ui.route}"><i></i><span>${esc(r.name)}</span><b>${shown(r.id).length}</b></button>`).join('');
+}
+function renderView() {
+  const planner = ui.view === 'planner';
+  $('#planner').hidden = !planner;
+  $('#overview').hidden = planner;
+  $('#planner').dataset.pane = ui.pane;
+  document.body.dataset.view = ui.view;
+  $$('[data-act="view"]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === ui.view)));
+  $$('#bottom-nav button').forEach(b => b.setAttribute('aria-pressed', String(planner ? b.dataset.pane === ui.pane : b.dataset.pane === 'overview')));
+}
+
+/* ---------- render: list ---------- */
+function matches(c) {
+  const b = getBuild(ui.route, c.id);
+  const rs = assigned(c.id);
+  const tags = C.tags(c, state);
+  const g = c.growth;
+  const skills = c.strengths || [], weak = c.weaknesses || [];
+  const roles = C.buildRoles(b || C.blankBuild(c.id));
+  const weapons = [b?.primary, b?.secondary];
+  const q = f.q.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (q) {
+    if (isCho(q.replace(/ /g, ''))) {
+      const k = q.replace(/ /g, '');
+      if (![c.name, ...c.aliases].some(n => cho(n).includes(k))) return false;
+    } else {
+      const text = [c.name, ...c.aliases, ...tags, c.personal, c.unique, ...skills, ...weak, b?.roleLabel, jobName(b?.finalClass)].join(' ').toLowerCase();
+      if (!q.split(' ').every(w => text.includes(w))) return false;
+    }
+  }
+  if (f.assign === 'route' && !b) return false;
+  if (f.assign === 'planned' && !rs.length) return false;
+  if (f.assign === 'unassigned' && rs.length) return false;
+  if (f.route && !getBuild(f.route, c.id)) return false;
+  if (f.role && !roles.includes(f.role)) return false;
+  if (f.job && b?.finalClass !== f.job) return false;
+  if (f.strength && !skills.includes(f.strength)) return false;
+  if (f.weakness && !weak.includes(f.weakness)) return false;
+  if (f.tag && !tags.includes(f.tag)) return false;
+  switch (f.quick) {
+    case '물리': return g.str >= 40 || roles.includes('물리딜');
+    case '마법': return g.mg >= 40 || roles.includes('마법딜') || weapons.includes('흑마법');
+    case '활': return skills.includes('활') || weapons.includes('활') || roles.includes('활');
+    case '힐러': return skills.includes('백마법') || roles.includes('힐 가능');
+    case '기병': return b?.movement === '기병' || skills.includes('기마');
+    case '비행': return b?.movement === '비행' || skills.includes('비행');
+    case '중장': return b?.movement === '중장' || skills.includes('중장');
+    default: return true;
+  }
+}
+function sortChars(list) {
+  if (ui.sort === 'name') return [...list].sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+  if (STAT_KEYS.includes(ui.sort)) return [...list].sort((a, b) => (b.growth[ui.sort] ?? -1) - (a.growth[ui.sort] ?? -1));
+  return list;
+}
+function routeDots(id) {
+  const names = assigned(id).map(r => r.name).join(' · ') || '미배정';
+  return `<span class="route-dots" role="img" aria-label="${esc(names)}" title="${esc(names)}">${D.routes.map(r => `<i style="--c:${r.color}"${getBuild(r.id, id) ? ' class="on"' : ''}></i>`).join('')}</span>`;
+}
+function charRow(c) {
+  const inRoute = !!getBuild(ui.route, c.id);
+  const tags = C.tags(c, state);
+  const cmp = ui.compare.includes(c.id);
+  const stat = STAT_KEYS.includes(ui.sort) ? c.growth[ui.sort] : null;
+  return `<li class="char-row${ui.drawer?.id === c.id ? ' active' : ''}" draggable="true" data-drag="${c.id}">
+    <button class="char-open" data-act="open" data-id="${c.id}">${avatar(c)}<span class="char-text"><span class="char-name">${e(c.name)}</span><span class="char-sub">${e(tags.slice(0, 3).join(' · ')) || '&nbsp;'}</span></span>${stat != null ? `<span class="stat-badge">${stat}</span>` : ''}</button>
+    ${routeDots(c.id)}
+    <button class="icon-btn cmp" data-act="compare" data-id="${c.id}" aria-pressed="${cmp}" title="비교 후보" aria-label="${e(c.name)} 비교 후보">${I.compare}</button>
+    <button class="add-btn${inRoute ? ' on' : ''}" data-act="${inRoute ? 'remove' : 'add'}" data-id="${c.id}" title="${inRoute ? '부대에서 제외' : '부대에 추가'}" aria-label="${e(c.name)} ${esc(cur().name)} 부대${inRoute ? '에서 제외' : '에 추가'}">${inRoute ? I.check : I.plus}</button>
+  </li>`;
+}
+function renderList() {
+  const all = visibleChars();
+  const list = sortChars(all.filter(matches));
+  $('#list-count').textContent = list.length === all.length ? `${all.length}명` : `${list.length} / ${all.length}명`;
+  $$('#assign-seg button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.assign === f.assign)));
+  $('#assign-seg [data-assign="route"]').textContent = cur().name;
+  $('#quick-chips').innerHTML = QUICK.map(q => `<button class="chip" data-act="quick" data-quick="${q}" aria-pressed="${f.quick === q}">${q}</button>`).join('');
+  const active = PANEL_FILTERS.filter(k => f[k]).length;
+  $('#filter-btn').innerHTML = `${svg('<path d="M4 6h16M7 12h10M10 18h4"/>')}필터${active ? `<b>${active}</b>` : ''}`;
+  $('#filter-btn').setAttribute('aria-expanded', String(ui.filtersOpen));
+  $('#char-list').innerHTML = list.length
+    ? list.map(charRow).join('')
+    : '<li class="empty">조건에 맞는 캐릭터가 없습니다.<button class="btn sm" data-act="reset-filters">검색·필터 초기화</button></li>';
+  renderCompareBar();
+}
+function renderFilterPanel() {
+  const p = $('#filter-panel');
+  p.hidden = !ui.filtersOpen;
+  if (!ui.filtersOpen) return;
+  const allTags = [...new Set(visibleChars().flatMap(c => C.tags(c, state)))].sort((a, b) => a.localeCompare(b, 'ko'));
+  p.innerHTML = `
+    <label>배정 루트<select data-filter="route">${options(D.routes.map(r => [r.id, r.name]), f.route, '전체')}</select></label>
+    <label>태그<select data-filter="tag">${options(allTags, f.tag, '전체')}</select></label>
+    <label>특기<select data-filter="strength">${options(PROFS, f.strength, '전체')}</select></label>
+    <label>약점<select data-filter="weakness">${options(PROFS, f.weakness, '전체')}</select></label>
+    <label>역할 (${esc(cur().name)})<select data-filter="role">${options(C.ROLES, f.role, '전체')}</select></label>
+    <label>최종직 (${esc(cur().name)})<select data-filter="job">${options(D.classes.map(j => [j.id, j.name]), f.job, '전체')}</select></label>
+    <button class="btn sm" data-act="reset-filters">필터 초기화</button>`;
+}
+function renderCompareBar() {
+  const bar = $('#compare-bar');
+  ui.compare = ui.compare.filter(isVisible);
+  bar.hidden = !ui.compare.length;
+  if (!ui.compare.length) return;
+  bar.innerHTML = `<span class="faces">${ui.compare.map(id => avatar(chars.get(id))).join('')}</span>
+    <span class="label">비교 ${ui.compare.length}/3</span>
+    <button class="btn sm primary" data-act="show-compare"${ui.compare.length < 2 ? ' disabled' : ''}>비교 보기</button>
+    <button class="icon-btn" data-act="clear-compare" aria-label="비교 비우기">${I.x}</button>`;
+}
+
+/* ---------- render: squad ---------- */
+function squadRow(b, i, a) {
+  const c = chars.get(b.characterId);
+  const j = jobs.get(b.finalClass);
+  const role = b.roleLabel || C.buildRoles(b).join(' · ');
+  const weapons = [...new Set([b.primary, b.secondary].filter(Boolean))];
+  const dupJob = j && a.classes[j.id]?.length >= DUP.job;
+  return `<li class="squad-row${ui.drawer?.id === c.id ? ' active' : ''}" data-id="${c.id}">
+    <button class="handle" data-handle="${c.id}" aria-label="${e(c.name)} 순서 이동 (위아래 화살표)" title="끌어서 순서 변경">${I.grip}</button>
+    <button class="squad-open" data-act="open" data-id="${c.id}" data-tab="build">
+      <span class="squad-num">${i + 1}</span>${avatar(c)}
+      <span class="squad-text"><span class="squad-name">${e(c.name)}</span><span class="squad-role${role ? '' : ' muted'}">${e(role || '역할 미정')}</span></span>
+      <span class="squad-build">${j ? `<span class="pill job${dupJob ? ' dup' : ''}">${esc(j.name)}</span>` : '<span class="pill ghost">최종직 미정</span>'}${weapons.map(w => `<span class="pill">${esc(w)}</span>`).join('')}${b.movement ? `<span class="pill">${esc(b.movement)}</span>` : ''}</span>
+    </button>
+    <button class="icon-btn remove" data-act="remove" data-id="${c.id}" aria-label="${e(c.name)} 부대에서 제외" title="부대에서 제외">${I.x}</button>
+  </li>`;
+}
+function renderSquad() {
+  const r = cur();
+  const builds = shown(r.id);
+  const a = C.analyze(builds);
+  const hidden = state.routes[r.id].length - builds.length;
+  $('#squad-title').textContent = `${r.name} 부대`;
+  $('#squad-sub').textContent = `${a.total}명 · 최종직 ${Object.keys(a.classes).length}종${a.unconfigured ? ` · 빌드 미정 ${a.unconfigured}명` : ''}`;
+  const d = dupes(a);
+  $('#squad-alerts').innerHTML = d.length
+    ? `<div class="alerts"><span class="alerts-label">겹침</span>${d.map(x => `<button data-act="pane" data-pane="stats">${esc(x.label)} ×${x.n}</button>`).join('')}</div>`
+    : '';
+  $('#squad-list').innerHTML = builds.length
+    ? builds.map((b, i) => squadRow(b, i, a)).join('')
+    : `<li class="squad-empty">아직 편성한 동료가 없습니다.<button class="btn sm primary" data-act="focus-search">동료 찾기</button></li>`;
+  $('#squad-hidden').hidden = !hidden;
+  $('#squad-hidden').textContent = `스포일러 보호로 ${hidden}명이 숨겨져 있습니다.`;
+}
+
+/* ---------- render: stats ---------- */
+function renderStats() {
+  const r = cur();
+  const builds = shown(r.id);
+  const a = C.analyze(builds);
+  const barRow = (label, n, dupAt) => `<div class="bar-row${n ? '' : ' zero'}${dupAt && n >= dupAt ? ' dup' : ''}"><span>${esc(label)}</span><span class="bar"><i style="width:${a.total ? Math.min(100, n / a.total * 100) : 0}%"></i></span><b>${n}</b></div>`;
+  const tile = (label, n, dupAt) => `<div class="tile${n ? '' : ' zero'}${dupAt && n >= dupAt ? ' dup' : ''}"><b>${n}</b><span>${esc(label)}</span></div>`;
+  const groups = Object.entries(a.classes).sort((x, y) => y[1].length - x[1].length || jobName(x[0]).localeCompare(jobName(y[0]), 'ko'));
+  const todo = builds.filter(b => missingParts(b).length);
+  $('#stats').innerHTML = `<div class="stats-inner">
+    <div class="col-head"><div><h2>부대 분석</h2><p class="col-sub">${esc(r.name)} 부대 기준</p></div></div>
+    <div class="kpis">
+      <div class="kpi"><b>${a.total}</b><span>인원</span></div>
+      <div class="kpi"><b>${Object.keys(a.classes).length}</b><span>최종직 종류</span></div>
+      <div class="kpi${a.unconfigured ? ' warn' : ''}"><b>${a.unconfigured}</b><span>빌드 미정</span></div>
+    </div>
+    <section class="stat-sec"><h3>역할 <small>${a.missing.roles ? `미정 ${a.missing.roles}명` : ''}</small></h3>${C.ROLES.map(x => barRow(x, a.roles[x], DUP.role)).join('')}</section>
+    <section class="stat-sec"><h3>무기 <small>${a.missing.weapons ? `미정 ${a.missing.weapons}명` : ''}</small></h3><div class="tiles">${C.WEAPONS.map(x => tile(x, a.weapons[x], DUP.weapon)).join('')}</div></section>
+    <section class="stat-sec"><h3>이동 타입 <small>${a.missing.movement ? `미정 ${a.missing.movement}명` : ''}</small></h3><div class="tiles">${C.MOVEMENTS.map(x => tile(x, a.movement[x])).join('')}</div></section>
+    <section class="stat-sec"><h3>최종직 <small>${a.missing.classes ? `미정 ${a.missing.classes}명` : ''}</small></h3>
+      ${groups.length ? groups.map(([id, ids]) => `<div class="job-group${ids.length >= DUP.job ? ' dup' : ''}"><div class="job-top"><button data-act="class-info" data-job="${id}">${esc(jobName(id))}</button><span class="n">×${ids.length}</span></div><div class="name-links">${ids.map(cid => `<button data-act="open" data-id="${cid}" data-tab="build">${e(chars.get(cid).name)}</button>`).join('')}</div></div>`).join('') : '<p class="note">아직 지정한 최종직이 없습니다.</p>'}
+    </section>
+    ${todo.length ? `<section class="stat-sec"><h3>빌드 미정 <small>${todo.length}명</small></h3>${todo.map(b => `<button class="todo-row" data-act="open" data-id="${b.characterId}" data-tab="build"><b>${e(chars.get(b.characterId).name)}</b><span>${missingParts(b).join(' · ')}</span></button>`).join('')}</section>` : ''}
+  </div>`;
+}
+
+/* ---------- render: overview ---------- */
+function renderOverview() {
+  const counts = Object.fromEntries(D.routes.map(r => [r.id, C.analyze(shown(r.id))]));
+  const vis = visibleChars();
+  const multi = vis.filter(c => assigned(c.id).length > 1);
+  const unused = vis.filter(c => !assigned(c.id).length);
+  const groups = [
+    ['인원', [['인원', a => a.total]]],
+    ['역할', C.ROLES.map(x => [x, a => a.roles[x], DUP.role])],
+    ['무기', C.WEAPONS.map(x => [x, a => a.weapons[x], DUP.weapon])],
+    ['이동 타입', C.MOVEMENTS.map(x => [x, a => a.movement[x]])]
+  ];
+  const labels = id => `<span class="route-labels">${assigned(id).map(r => `<span class="route-label" style="--c:${r.color}"><i></i>${esc(r.name)}</span>`).join('')}</span>`;
+  $('#overview').innerHTML = `
+    <div class="ov-cards">${D.routes.map(r => {
+      const a = counts[r.id];
+      return `<button class="ov-card" style="--c:${r.color}" data-act="route" data-route="${r.id}"><h3>${esc(r.name)}</h3><div class="big">${a.total}<small>명</small></div><p>최종직 ${Object.keys(a.classes).length}종 · 빌드 미정 ${a.unconfigured}명</p></button>`;
+    }).join('')}</div>
+    <div class="ov-grid">
+      <section class="panel"><h2>루트별 구성 비교</h2>
+        <div class="table-wrap"><table class="table">
+          <thead><tr><th></th>${D.routes.map(r => `<th style="--c:${r.color}"><i></i>${esc(r.name)}</th>`).join('')}</tr></thead>
+          <tbody>${groups.map(([title, rows]) => `${title !== '인원' ? `<tr class="group"><th colspan="${D.routes.length + 1}">${title}</th></tr>` : ''}${rows.map(([n, fn, dupAt]) => `<tr><th>${esc(n)}</th>${D.routes.map(r => { const v = fn(counts[r.id]); return `<td class="${v ? '' : 'zero'}${dupAt && v >= dupAt ? ' dup' : ''}">${v}</td>`; }).join('')}</tr>`).join('')}`).join('')}</tbody>
+        </table></div>
+      </section>
+      <div>
+        <section class="panel"><h2>여러 루트에 배치 <span class="count">${multi.length}명</span></h2>
+          ${multi.length ? multi.map(c => `<div class="overlap-row"><button data-act="open" data-id="${c.id}">${avatar(c)}${e(c.name)}</button>${labels(c.id)}</div>`).join('') : '<p class="note">두 루트 이상에 배치한 캐릭터가 없습니다.</p>'}
+        </section>
+        <section class="panel"><h2>미배정 <span class="count">${unused.length}명</span></h2>
+          ${unused.length ? `<div class="face-grid">${unused.map(c => `<button class="face" data-act="open" data-id="${c.id}">${avatar(c, 'md')}${e(c.name)}</button>`).join('')}</div>` : '<p class="note">모든 캐릭터가 한 루트 이상에 배치되어 있습니다.</p>'}
+        </section>
+      </div>
+    </div>`;
+}
+
+/* ---------- drawer ---------- */
+function openDrawer(id, tab) {
+  if (!isVisible(id)) return;
+  const wasOpen = !!ui.drawer;
+  const same = ui.drawer?.id === id;
+  ui.drawer = { id, route: same ? ui.drawer.route : ui.route, tab: tab || (same ? ui.drawer.tab : 'info') };
+  if (!same) ui.tagEdit = false;
+  renderDrawer(!same);
+  const el = $('#drawer');
+  el.classList.add('open');
+  el.setAttribute('aria-hidden', 'false');
+  $('#scrim').classList.add('show');
+  if (!wasOpen) {
+    try { history.pushState({ drawer: 1 }, ''); } catch { /* ignore */ }
+    requestAnimationFrame(() => $('#drawer [data-act="close-drawer"]')?.focus({ preventScroll: true }));
+  }
+  renderList();
+  renderSquad();
+}
+function closeDrawer(fromHistory = false) {
+  if (!ui.drawer) return;
+  const id = ui.drawer.id;
+  ui.drawer = null;
+  ui.tagEdit = false;
+  const el = $('#drawer');
+  el.classList.remove('open');
+  el.setAttribute('aria-hidden', 'true');
+  $('#scrim').classList.remove('show');
+  if (!fromHistory && history.state?.drawer) history.back();
+  renderList();
+  renderSquad();
+  $(`.char-open[data-id="${id}"], .squad-open[data-id="${id}"]`)?.focus({ preventScroll: true });
+}
+addEventListener('popstate', () => { if (ui.drawer) closeDrawer(true); });
+
+function growthBlock(c, j) {
+  const withJ = j && ui.withClass;
+  return `<div class="block"><div class="block-head"><h3>성장률</h3>${j ? `<label class="toggle"><input type="checkbox" id="with-class"${ui.withClass ? ' checked' : ''}>${esc(j.name)} 보정 포함</label>` : ''}</div>
+    <div class="growth">${C.STATS.map(([k, n]) => {
+      const base = c.growth[k];
+      const add = withJ ? (j.growth[k] || 0) : 0;
+      const total = base == null ? null : base + add;
+      const baseW = Math.max(0, Math.min(100, add < 0 ? total : base ?? 0));
+      const addW = add > 0 ? Math.max(0, Math.min(100 - baseW, add)) : 0;
+      return `<div class="g-row${base >= 50 ? ' hi' : ''}"><span class="lab">${n}</span><span class="g-bar"><i style="width:${baseW}%"></i>${addW ? `<i class="cls" style="width:${addW}%"></i>` : ''}</span><span class="g-val">${total ?? '—'}${withJ && add ? `<small>${sign(add)}</small>` : ''}</span></div>`;
+    }).join('')}</div></div>`;
+}
+function traitBlock(label, text) {
+  const t = traits(text);
+  if (!t.length) return `<div class="trait none"><span class="trait-label">${label}</span>없음</div>`;
+  return `<details class="trait"><summary><span class="trait-label">${label}</span><span class="trait-names">${esc(t.map(x => x.name).join(' / '))}</span>${I.chev}</summary><dl>${t.map(x => `<dt>${esc(x.name)}</dt><dd>${esc(x.body || '—')}</dd>`).join('')}</dl></details>`;
+}
+function tagBlock(c) {
+  const tags = C.tags(c, state);
+  const custom = Object.hasOwn(state.characterTags, c.id);
+  if (!ui.tagEdit) {
+    return `<div class="block"><div class="block-head"><h3>태그${custom ? ' <small class="muted">직접 수정함</small>' : ''}</h3><button class="btn sm ghost" data-act="tag-edit">${I.pencil}수정</button></div>
+      <div class="chips">${tags.length ? tags.map(t => `<span class="tag">${e(t)}</span>`).join('') : '<span class="note">태그 없음</span>'}</div></div>`;
+  }
+  const suggestions = AUTO_TAGS.filter(t => !tags.includes(t));
+  return `<div class="block"><div class="block-head"><h3>태그 수정</h3><button class="btn sm primary" data-act="tag-edit">완료</button></div>
+    <div class="tag-edit">
+      <div class="chips">${tags.map(t => `<span class="tag">${e(t)}<button data-act="tag-remove" data-tag="${esc(t)}" aria-label="${esc(t)} 삭제">${I.x}</button></span>`).join('') || '<span class="note">태그 없음</span>'}</div>
+      <div class="row"><input type="text" id="tag-input" maxlength="80" placeholder="새 태그 입력 후 Enter"><button class="btn sm" data-act="tag-add">추가</button></div>
+      ${suggestions.length ? `<div class="chips">${suggestions.map(t => `<button class="tag add" data-act="tag-add" data-tag="${esc(t)}">+ ${esc(t)}</button>`).join('')}</div>` : ''}
+      ${custom ? '<div><button class="btn sm" data-act="tag-reset">자동 태그로 되돌리기</button></div>' : ''}
+    </div></div>`;
+}
+function pathChips(path) {
+  return path.split(/→|->|>|＞|,/).map(s => s.trim()).filter(Boolean).map(n => {
+    const j = D.classes.find(x => x.name.replace(/\s/g, '') === n.replace(/\s/g, ''));
+    return j ? `<button class="pill job" data-act="class-info" data-job="${j.id}">${esc(j.name)}</button>` : '';
+  }).join('');
+}
+function weaponChips(b, slot, allowed) {
+  const value = b[slot];
+  const chips = allowed.map(w => `<button class="chip" data-act="weapon" data-slot="${slot}" data-w="${esc(w)}" aria-pressed="${value === w}">${esc(w)}</button>`);
+  if (value && !allowed.includes(value)) chips.push(`<button class="chip bad" data-act="weapon" data-slot="${slot}" data-w="${esc(value)}" title="이 병종은 사용할 수 없습니다. 눌러서 해제" aria-pressed="true">${esc(value)}</button>`);
+  return `<div class="chips">${chips.join('')}</div>`;
+}
+function buildBlock(c, d) {
+  const r = routes.get(d.route);
+  const b = getBuild(d.route, c.id);
+  const pick = `<div class="route-pick">${D.routes.map(x => `<button data-act="drawer-route" data-route="${x.id}" style="--c:${x.color}" class="${getBuild(x.id, c.id) ? 'member' : ''}" aria-pressed="${x.id === d.route}"><i></i>${esc(x.name)}</button>`).join('')}</div>`;
+  if (!b) {
+    return `<div class="block-head"><h3>루트별 빌드</h3></div>${pick}
+      <div class="build-empty">${esc(r.name)} 부대에 없는 캐릭터입니다.<button class="btn primary" data-act="add" data-id="${c.id}" data-route="${r.id}">${I.plus}${esc(r.name)} 부대에 추가</button></div>`;
+  }
+  const j = jobs.get(b.finalClass);
+  const allowed = C.classWeapons(j);
+  const ids = shown(d.route).map(x => x.characterId);
+  const pos = ids.indexOf(c.id);
+  return `<div class="block-head"><h3>루트별 빌드</h3></div>${pick}
+    <label class="field"><span class="f-label">역할 이름</span><input type="text" data-bfield="roleLabel" value="${esc(b.roleLabel)}" maxlength="150" placeholder="예: 딜탱, 마법 타조, 전열 지원"></label>
+    <div class="field"><span class="f-label">집계 역할 <small>여러 개 선택</small></span><div class="chips">${C.ROLES.map(x => `<button class="chip" data-act="role" data-role="${x}" aria-pressed="${b.roles.includes(x)}">${x}</button>`).join('')}</div></div>
+    <div class="field"><span class="f-label">최종직</span>
+      <div class="job-field">
+        <button class="job-btn${j ? '' : ' empty-job'}" data-act="pick-class" data-mode="final">${j ? `<b>${esc(j.name)}</b><span>${esc(j.tier)} · ${esc(j.movementType || '이동 미수록')} · ${esc(j.weapons.join(' · ') || '무기 자료 없음')}</span>` : '<b>병종 선택</b><span>이동 타입 자동 적용 · 무기는 병종 사용 무기로 제한</span>'}</button>
+        ${j ? `<button class="icon-btn" data-act="class-info" data-job="${j.id}" aria-label="${esc(j.name)} 병종 정보" title="병종 정보">${I.info}</button>` : ''}
+      </div></div>
+    <div class="field"><span class="f-label">주무기${j && !j.weapons.length ? ' <small>무기 자료가 없어 전체 표시</small>' : ''}</span>${weaponChips(b, 'primary', allowed)}</div>
+    <div class="field"><span class="f-label">보조무기</span>${weaponChips(b, 'secondary', allowed)}</div>
+    <div class="field"><span class="f-label">이동 타입</span><div class="chips">${C.MOVEMENTS.map(x => `<button class="chip" data-act="movement" data-move="${x}" aria-pressed="${b.movement === x}">${x}</button>`).join('')}</div></div>
+    <div class="field"><span class="f-label">중간 전직 경로</span>
+      <div class="path-row"><input type="text" data-bfield="path" value="${esc(b.path)}" maxlength="3000" placeholder="병사 → 기갑 타조병 → 가디언"><button class="btn" data-act="pick-class" data-mode="path">${I.plus}병종</button></div>
+      <div class="path-chips" id="path-chips">${pathChips(b.path)}</div></div>
+    <label class="field"><span class="f-label">육성 메모</span><textarea data-bfield="notes" rows="4" maxlength="20000" placeholder="우선 훈련할 적성, 장비, 목표 등">${esc(b.notes)}</textarea></label>
+    <div class="build-foot">
+      <span class="order-btns">순서 ${pos + 1}/${ids.length}
+        <button class="icon-btn" data-act="drawer-move" data-dir="-1" aria-label="위로"${pos <= 0 ? ' disabled' : ''}>${I.up}</button>
+        <button class="icon-btn" data-act="drawer-move" data-dir="1" aria-label="아래로"${pos >= ids.length - 1 ? ' disabled' : ''}>${I.down}</button></span>
+      <button class="btn sm danger" data-act="remove" data-id="${c.id}" data-route="${r.id}">${esc(r.name)} 부대에서 제외</button>
+    </div>`;
+}
+function renderDrawer(resetScroll = false) {
+  const d = ui.drawer;
+  if (!d) return;
+  const c = chars.get(d.id);
+  if (!c || !C.visible(c, state)) { closeDrawer(); return; }
+  const oldBody = $('#drawer .drawer-body');
+  const scroll = resetScroll || !oldBody ? 0 : oldBody.scrollTop;
+  const j = jobs.get(getBuild(d.route, c.id)?.finalClass);
+  const tags = C.tags(c, state);
+  const cmp = ui.compare.includes(c.id);
+  $('#drawer').innerHTML = `
+    <header class="drawer-head">
+      ${avatar(c, 'lg')}
+      <div class="dh-text">
+        <h2 id="drawer-title">${e(c.name)}${c.aliases.length ? `<small>${e(c.aliases.join(', '))}</small>` : ''}</h2>
+        <div class="dh-tags">${tags.slice(0, 5).map(t => `<span class="tag">${e(t)}</span>`).join('')}</div>
+      </div>
+      <button class="icon-btn" data-act="compare" data-id="${c.id}" aria-pressed="${cmp}" title="${cmp ? '비교 후보에서 빼기' : '비교 후보에 추가'}" aria-label="비교 후보">${I.compare}</button>
+      <button class="icon-btn" data-act="close-drawer" aria-label="닫기" title="닫기 (Esc)">${I.x}</button>
+    </header>
+    <nav class="drawer-tabs" aria-label="상세 보기">
+      <button data-act="drawer-tab" data-tab="info" aria-pressed="${d.tab === 'info'}">정보</button>
+      <button data-act="drawer-tab" data-tab="build" aria-pressed="${d.tab === 'build'}">빌드 · ${esc(routes.get(d.route).name)}</button>
+    </nav>
+    <div class="drawer-body" data-tab="${d.tab}">
+      <section class="d-info">
+        ${growthBlock(c, j)}
+        <div class="block"><h3>특기 · 약점</h3>
+          <div class="apt"><span class="apt-label">특기</span><div class="chips">${(c.strengths || []).map(x => `<span class="pill">${esc(x)}</span>`).join('') || '<span class="note">자료 없음</span>'}</div></div>
+          <div class="apt"><span class="apt-label weak">약점</span><div class="chips">${(c.weaknesses || []).map(x => `<span class="pill weak-pill">${esc(x)}</span>`).join('') || '<span class="note">자료 없음</span>'}</div></div>
+        </div>
+        <div class="block"><h3>특성</h3>${traitBlock('개인', c.personal)}${traitBlock('유니크', c.unique)}</div>
+        ${tagBlock(c)}
+      </section>
+      <section class="d-build">${buildBlock(c, d)}</section>
+    </div>`;
+  $('#drawer .drawer-body').scrollTop = scroll;
+}
+
+/* ---------- modal ---------- */
+function openModal(m) {
+  ui.modal = m;
+  renderModal();
+  const dlg = $('#modal');
+  if (!dlg.open) dlg.showModal();
+  if (m.kind === 'picker' && !isMobile()) $('#picker-q')?.focus();
+}
+function closeModal() {
+  const dlg = $('#modal');
+  if (dlg.open) dlg.close();
+  ui.modal = null;
+}
+$('#modal').addEventListener('close', () => { ui.modal = null; });
+$('#modal').addEventListener('click', ev => {
+  const dlg = ev.currentTarget;
+  if (ev.target !== dlg) return;
+  const r = dlg.getBoundingClientRect();
+  if (ev.clientX < r.left || ev.clientX > r.right || ev.clientY < r.top || ev.clientY > r.bottom) closeModal();
 });
-document.addEventListener('change',ev=>{
- const t=ev.target;
- if(t.id==='assignment-filter'){f.assignment=t.value;renderCatalog();}
- if(t.dataset.filter){f[t.dataset.filter]=t.value;renderCatalog();}
- if(t.dataset.build&&t.tagName==='SELECT'){const b=getBuild(detailRoute,detailId);if(!b)return;if(t.dataset.build==='finalClass'){selectClass(t.value);return;}if(['primary','secondary'].includes(t.dataset.build)&&t.value&&!C.classWeapons(jobs.get(b.finalClass)).includes(t.value))return;b[t.dataset.build]=t.value;save();render();$('#build-job-actions').innerHTML=buildJobActions(b);}
- if(t.dataset.role){const b=getBuild(detailRoute,detailId);b.roles=t.checked?[...new Set([...b.roles,t.dataset.role])]:b.roles.filter(r=>r!==t.dataset.role);save();render();}
- if(t.id==='spoilers-toggle'){
-  if(t.checked){t.checked=false;utility('전체 캐릭터를 공개할까요?','<p>후반에 합류하거나 합류 시점이 확인되지 않은 인물의 이름·특성이 목록과 비교 화면에 나타납니다.</p><p>이 선택은 설정에서 언제든 되돌릴 수 있습니다.</p>',`${button('settings','보호 유지')}${button('spoilers-confirm','전체 공개','class="primary"')}`);}
-  else{state.settings.spoilers=false;compare=compare.filter(isVisible);save();render();closeDialog($('#detail-dialog'));closeDialog($('#class-dialog'));settings();}
- }
+const mHead = (title, sub = '') => `<header class="m-head"><div><h2>${title}</h2>${sub ? `<p class="m-sub">${sub}</p>` : ''}</div><button class="icon-btn" data-act="close-modal" aria-label="닫기">${I.x}</button></header>`;
+
+function renderModal() {
+  const m = ui.modal;
+  if (!m) return;
+  const dlg = $('#modal');
+  dlg.classList.toggle('wide', m.kind === 'compare');
+  const html = {
+    picker: pickerHtml, class: classHtml, compare: compareHtml, settings: settingsHtml,
+    confirm: () => `${mHead(m.title)}<div class="m-body">${m.body}</div><div class="m-foot"><button class="btn" data-act="${m.cancelAct || 'close-modal'}">${m.cancel || '취소'}</button><button class="btn ${m.danger ? 'danger' : 'primary'}" data-act="${m.okAct}">${m.ok}</button></div>`,
+    message: () => `${mHead(m.title)}<div class="m-body">${m.body}</div><div class="m-foot"><button class="btn primary" data-act="close-modal">확인</button></div>`
+  }[m.kind]();
+  dlg.innerHTML = html;
+  if (m.kind === 'picker') renderPickerList();
+}
+
+function classTable(j, c) {
+  return `<div class="table-wrap"><table class="table">
+    <thead><tr><th></th>${C.STATS.map(([, n]) => `<th>${n}</th>`).join('')}</tr></thead>
+    <tbody>
+      <tr><th>병종 성장률</th>${STAT_KEYS.map(k => `<td class="${j.growth[k] ? '' : 'zero'}">${sign(j.growth[k])}</td>`).join('')}</tr>
+      <tr><th>능력치 보정</th>${STAT_KEYS.map(k => `<td class="${j.modifiers?.[k] ? '' : 'zero'}">${sign(j.modifiers?.[k])}</td>`).join('')}</tr>
+      ${c ? `<tr><th>${e(c.name)}</th>${STAT_KEYS.map(k => `<td>${c.growth[k] ?? '—'}</td>`).join('')}</tr>
+      <tr><th>합산 성장률</th>${STAT_KEYS.map(k => `<td class="${(c.growth[k] ?? 0) >= 50 ? 'best' : ''}">${c.growth[k] != null ? c.growth[k] + (j.growth[k] || 0) : '—'}</td>`).join('')}</tr>` : ''}
+    </tbody></table></div>`;
+}
+function classHtml() {
+  const j = jobs.get(ui.modal.job);
+  const d = ui.modal.fromDrawer ? ui.drawer : null;
+  const c = d ? chars.get(d.id) : null;
+  const b = d ? drawerBuild() : null;
+  return `${mHead(esc(j.name), `${esc(j.tier)}${j.restrictions ? ` · ${esc(j.restrictions)} 전용` : ''}`)}
+    <div class="m-body">
+      <div class="facts">
+        <div class="fact"><span>이동 타입</span>${esc(j.movementType || '미수록')}</div>
+        <div class="fact"><span>이동력 (보정)</span>${j.movement ?? '—'} (${sign(j.movementBonus)})</div>
+        <div class="fact"><span>사용 무기·마법</span>${esc(j.weapons.join(' · ') || '자료 없음')}</div>
+        <div class="fact"><span>적성</span>${esc(j.proficiencies.join(' · ') || '자료 없음')}</div>
+      </div>
+      ${classTable(j, c)}
+      <h3 class="sec-title">전직 조건</h3><p class="text-block">${esc(filled(j.requirements) || '없음')}${j.restrictions ? `\n${esc(j.restrictions)} 전용` : ''}</p>
+      <h3 class="sec-title">마스터 스킬</h3><p class="text-block">${esc(filled(j.master) || '자료 없음')}</p>
+      ${j.skills.filter(filled).length ? `<h3 class="sec-title">병종 스킬</h3><p class="text-block">${esc(j.skills.filter(filled).join('\n'))}</p>` : ''}
+    </div>
+    <div class="m-foot">${b && b.finalClass !== j.id ? `<button class="btn primary" data-act="pick" data-job="${j.id}">${esc(routes.get(d.route).name)} 최종직으로 선택</button>` : ''}<button class="btn" data-act="close-modal">닫기</button></div>`;
+}
+function pickerHtml() {
+  const m = ui.modal, d = ui.drawer, c = chars.get(d.id), b = drawerBuild();
+  return `${mHead(m.mode === 'final' ? '최종직 선택' : '전직 경로에 병종 추가', `${e(c.name)} · ${esc(routes.get(d.route).name)}`)}
+    <div class="m-tools">
+      <label class="search"><span class="search-icon">${I.search}</span><input id="picker-q" type="search" placeholder="병종 이름, 무기, 이동 타입" value="${esc(m.q)}" autocomplete="off"></label>
+      <div class="chip-row">
+        <button class="chip" data-act="picker-tier" data-tier="" aria-pressed="${!m.tier}">전체</button>
+        ${TIERS.map(([rank, tier]) => `<button class="chip" data-act="picker-tier" data-tier="${rank}" aria-pressed="${String(m.tier) === String(rank)}">${esc(tier)}</button>`).join('')}
+        <button class="chip" data-act="picker-fit" aria-pressed="${m.fit}" title="${e(c.name)}의 특기 무기를 쓰는 병종만">특기 무기</button>
+      </div>
+    </div>
+    <div class="m-body"><div id="picker-list" class="job-list"></div></div>
+    ${m.mode === 'final' && b?.finalClass ? '<div class="m-foot"><button class="btn" data-act="clear-class">최종직 비우기</button></div>' : ''}`;
+}
+function renderPickerList() {
+  const m = ui.modal;
+  if (m?.kind !== 'picker') return;
+  const d = ui.drawer, c = chars.get(d.id), b = drawerBuild();
+  const q = m.q.trim().toLowerCase();
+  const strengths = c.strengths || [];
+  const list = D.classes.filter(j => {
+    if (m.tier && String(j.rank) !== String(m.tier)) return false;
+    if (m.fit && !j.weapons.some(w => strengths.includes(w))) return false;
+    if (q && ![j.name, j.tier, j.movementType, ...j.weapons].join(' ').toLowerCase().includes(q)) return false;
+    return true;
+  });
+  const html = TIERS.map(([rank, tier]) => {
+    const rows = list.filter(j => j.rank === rank);
+    if (!rows.length) return '';
+    return `<p class="tier-title">${esc(tier)}</p>${rows.map(j => {
+      const current = m.mode === 'final' && b?.finalClass === j.id;
+      const open = m.open === j.id;
+      return `<div class="job-row${current ? ' current' : ''}${open ? ' open' : ''}">
+        <div class="job-row-top">
+          <button class="job-main" data-act="job-expand" data-job="${j.id}" aria-expanded="${open}">${I.chev}<span><b>${esc(j.name)}</b><span>${esc(j.movementType || '이동 미수록')} ${j.movement ?? ''} · ${esc(j.weapons.join(' · ') || '무기 자료 없음')}${j.restrictions ? ` · ${esc(j.restrictions)}` : ''}</span></span></button>
+          <button class="btn sm${current ? '' : ' primary'}" data-act="pick" data-job="${j.id}"${current ? ' disabled' : ''}>${current ? '선택됨' : m.mode === 'final' ? '선택' : '추가'}</button>
+        </div>
+        ${open ? `<div class="job-detail">${classTable(j, c)}<p><b>전직 조건</b> ${esc(filled(j.requirements) || '없음')}</p><p><b>마스터 스킬</b> ${esc(filled(j.master) || '자료 없음')}</p></div>` : ''}
+      </div>`;
+    }).join('')}`;
+  }).join('');
+  $('#picker-list').innerHTML = html || '<p class="empty">조건에 맞는 병종이 없습니다.</p>';
+}
+function compareHtml() {
+  const cs = ui.compare.filter(isVisible).map(id => chars.get(id));
+  const best = k => Math.max(...cs.map(c => c.growth[k] ?? -1));
+  const r = cur();
+  const text = (label, fn) => `<tr><th>${label}</th>${cs.map(c => `<td class="text">${fn(c)}</td>`).join('')}</tr>`;
+  const traitCell = t => { const x = traits(t); return x.length ? x.map(y => `<details><summary>${esc(y.name)}</summary>${esc(y.body)}</details>`).join('') : '없음'; };
+  return `${mHead('후보 비교', '성장률이 가장 높은 값을 강조합니다.')}
+    <div class="m-body"><div class="table-wrap"><table class="table cmp-table">
+      <colgroup><col class="cmp-label">${cs.map(() => '<col>').join('')}</colgroup>
+      <thead><tr><th></th>${cs.map(c => `<th class="cmp-head">${avatar(c, 'md')}<b>${e(c.name)}</b></th>`).join('')}</tr></thead>
+      <tbody>
+        ${C.STATS.map(([k, n]) => `<tr><th>${n}</th>${cs.map(c => `<td class="${cs.length > 1 && c.growth[k] === best(k) ? 'best' : ''}">${c.growth[k] ?? '—'}</td>`).join('')}</tr>`).join('')}
+        ${text('특기', c => esc((c.strengths || []).join(' · ') || '—'))}
+        ${text('약점', c => esc((c.weaknesses || []).join(' · ') || '—'))}
+        ${text('태그', c => e(C.tags(c, state).join(' · ') || '—'))}
+        ${text('개인 특성', c => traitCell(c.personal))}
+        ${text('유니크', c => traitCell(c.unique))}
+        ${text('배정', c => esc(assigned(c.id).map(x => x.name).join(' · ') || '미배정'))}
+        <tr><th></th>${cs.map(c => `<td>${getBuild(r.id, c.id) ? `<span class="pill">${esc(r.name)} 편성됨</span>` : `<button class="btn sm primary" data-act="add" data-id="${c.id}">${esc(r.name)}에 추가</button>`}</td>`).join('')}</tr>
+        <tr><th></th>${cs.map(c => `<td><button class="btn sm ghost" data-act="compare" data-id="${c.id}">빼기</button></td>`).join('')}</tr>
+      </tbody></table></div></div>
+    <div class="m-foot"><button class="btn" data-act="clear-compare">비교 비우기</button><button class="btn primary" data-act="close-modal">닫기</button></div>`;
+}
+function settingsHtml() {
+  const count = visibleChars().length;
+  const dark = state.settings.theme === 'dark';
+  return `${mHead('설정')}
+    <div class="m-body">
+      <section class="set"><h3>스포일러 보호</h3>
+        <label class="switch-row"><span>3부 이후 캐릭터도 표시</span><span class="switch"><input type="checkbox" id="spoiler-toggle"${state.settings.spoilers ? ' checked' : ''}><span></span></span></label>
+        <p>현재 ${count}명 표시 중. 끄면 1·2부에 합류하는 캐릭터만 보입니다.</p></section>
+      <section class="set"><h3>화면</h3>
+        <div class="seg" role="group" aria-label="테마"><button data-act="set-theme" data-mode="light" aria-pressed="${!dark}">라이트</button><button data-act="set-theme" data-mode="dark" aria-pressed="${dark}">다크</button></div></section>
+      <section class="set"><h3>백업 <small>${state.updatedAt ? `마지막 저장 ${esc(new Date(state.updatedAt).toLocaleString('ko-KR'))}` : ''}</small></h3>
+        <p>편성·빌드·메모·태그를 JSON 파일로 저장하고, 다른 기기에서 불러올 수 있습니다.</p>
+        <div class="row"><button class="btn primary" data-act="export">내보내기</button><button class="btn" data-act="import">불러오기</button>${corruptBackup ? '<button class="btn" data-act="export-corrupt">읽지 못한 원본 내보내기</button>' : ''}</div></section>
+      <section class="set"><h3>초기화</h3>
+        <p>처음 받은 루트별 명단으로 되돌립니다. 빌드·메모·수정한 태그가 지워집니다.</p>
+        <div class="row"><button class="btn danger" data-act="reset-ask">초기 편성으로 되돌리기</button></div></section>
+      <section class="set"><h3>자료 출처 <small>${esc(D.version)} 기준</small></h3>
+        <ul class="sources">
+          <li><a href="https://cass07.github.io/fe18-db/" target="_blank" rel="noopener noreferrer">cass07 만자천홍 DB</a><span>캐릭터·병종 성장률, 특성, 능력치 보정, 전직 조건, 마스터 스킬</span></li>
+          <li><a href="https://redfreshet.com/game-tools/fe-banshisenko/" target="_blank" rel="noopener noreferrer">redfreshet 공략 도구</a><span>특기·약점, 사용 무기, 이동 타입·이동력, 합류 시점</span></li>
+          <li><a href="https://fefw.azaws.workers.dev/" target="_blank" rel="noopener noreferrer">만자천홍 육성 도감</a><span>1부 초상화</span></li>
+        </ul></section>
+    </div>`;
+}
+
+/* ---------- backup ---------- */
+function download(value, name) {
+  const blob = new Blob([typeof value === 'string' ? value : JSON.stringify(value, null, 2)], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function exportState() {
+  download({ ...state, exportedAt: new Date().toISOString() }, `만자천홍-편성-${new Date().toISOString().slice(0, 10)}.json`);
+  toast('백업 파일을 내보냈습니다.');
+}
+$('#import-file').addEventListener('change', async ev => {
+  const file = ev.target.files[0];
+  ev.target.value = '';
+  if (!file) return;
+  try {
+    if (file.size > 2_000_000) throw new Error('2MB 이하 파일만 불러올 수 있습니다.');
+    ui.pendingImport = C.validateState(JSON.parse(await file.text()), D);
+    const counts = D.routes.map(r => `<span class="route-label" style="--c:${r.color}"><i></i>${esc(r.name)} ${ui.pendingImport.routes[r.id].length}명</span>`).join('');
+    openModal({ kind: 'confirm', title: '백업 불러오기', ok: '이 백업으로 교체', okAct: 'import-apply', cancel: '취소',
+      body: `<p><b>${esc(file.name)}</b></p><div class="preview-counts">${counts}</div><p>현재 편성을 이 파일의 내용으로 교체합니다. 스포일러 보호는 켜진 상태로 적용됩니다.</p>` });
+  } catch (err) {
+    ui.pendingImport = null;
+    openModal({ kind: 'message', title: '불러올 수 없습니다', body: `<p>${esc(err instanceof SyntaxError ? 'JSON 형식이 올바르지 않습니다.' : err.message)}</p><p>현재 편성은 그대로입니다.</p>` });
+  }
 });
-$('#import-file').addEventListener('change',async ev=>{
- const file=ev.target.files[0];if(!file)return;
- try{if(file.size>2_000_000)throw new Error('백업 파일은 2MB 이하만 불러올 수 있습니다.');const value=JSON.parse(await file.text());pendingImport=C.validateState(value,D);const count=D.routes.map(r=>`<span>${r.name} ${pendingImport.routes[r.id].length}명</span>`).join('');utility('백업 불러오기 미리보기',`<p>현재 편성을 아래 파일의 편성으로 교체합니다.</p><p>${esc(file.name)}</p><div class="backup-preview">${count}</div><p>빌드·메모·태그를 함께 복원합니다. 스포일러 보호는 켜진 상태로 적용되며 숨겨진 편성은 보존됩니다.</p>`,`${button('export','현재 편성 먼저 내보내기')}${button('import-apply','이 백업 적용','class="primary"')}`);}
- catch(err){pendingImport=null;utility('불러올 수 없습니다',`<p>${esc(err instanceof SyntaxError?'JSON 형식이 올바르지 않습니다. 현재 편성은 유지됩니다.':err.message)}</p>`);}
+
+/* ---------- actions ---------- */
+function focusSearch() {
+  ui.view = 'planner';
+  if (isMobile()) ui.pane = 'list';
+  renderView();
+  const s = $('#search');
+  s.focus();
+  s.select();
+}
+function tagsOf(id) { return [...C.tags(chars.get(id), state)]; }
+function setTags(id, list) {
+  const clean = [...new Set(list.map(t => t.trim()).filter(Boolean))];
+  if (clean.length > 30 || clean.some(t => t.length > 80)) { toast('태그는 30개, 한 개당 80자까지입니다.'); return; }
+  state.characterTags[id] = clean;
+  persist();
+  render();
+}
+
+const A = {
+  route(d) { ui.route = d.route; ui.view = 'planner'; saveUi(); if (ui.drawer) ui.drawer.route = d.route; render(); },
+  view(d) { ui.view = d.view; render(); scrollTo(0, 0); },
+  pane(d) {
+    if (d.pane === 'overview') ui.view = 'overview';
+    else { ui.view = 'planner'; ui.pane = d.pane; }
+    render();
+    scrollTo(0, 0);
+  },
+  theme() { state.settings.theme = state.settings.theme === 'dark' ? 'light' : 'dark'; persist(); applyTheme(); },
+  'set-theme'(d) { state.settings.theme = d.mode; persist(); applyTheme(); renderModal(); },
+  settings() { openModal({ kind: 'settings' }); },
+  open(d) { openDrawer(d.id, d.tab); },
+  'close-drawer'() { closeDrawer(); },
+  'drawer-tab'(d) { ui.drawer.tab = d.tab; renderDrawer(true); },
+  'drawer-route'(d) { ui.drawer.route = d.route; ui.drawer.tab = 'build'; renderDrawer(); },
+  'drawer-move'(d) { moveBy(ui.drawer.id, Number(d.dir), ui.drawer.route); },
+  add(d) { add(d.id, d.route || ui.route); },
+  remove(d) { remove(d.id, d.route || ui.route); },
+  compare(d) { toggleCompare(d.id); },
+  'show-compare'() { if (ui.compare.length >= 2) openModal({ kind: 'compare' }); },
+  'clear-compare'() { ui.compare = []; if (ui.modal?.kind === 'compare') closeModal(); renderList(); renderDrawer(); },
+  assign(d) { f.assign = d.assign; renderList(); },
+  quick(d) { f.quick = f.quick === d.quick ? '' : d.quick; renderList(); },
+  'toggle-filters'() { ui.filtersOpen = !ui.filtersOpen; renderFilterPanel(); renderList(); },
+  'reset-filters'() {
+    Object.keys(f).forEach(k => { f[k] = k === 'assign' ? 'all' : ''; });
+    $('#search').value = '';
+    renderFilterPanel();
+    renderList();
+  },
+  'focus-search'() { focusSearch(); },
+  role(d) {
+    const b = drawerBuild();
+    if (!b) return;
+    b.roles = b.roles.includes(d.role) ? b.roles.filter(x => x !== d.role) : C.ROLES.filter(x => x === d.role || b.roles.includes(x));
+    persist();
+    render();
+  },
+  weapon(d) {
+    const b = drawerBuild();
+    if (!b) return;
+    const other = d.slot === 'primary' ? 'secondary' : 'primary';
+    if (b[d.slot] === d.w) b[d.slot] = '';
+    else {
+      if (!C.classWeapons(jobs.get(b.finalClass)).includes(d.w)) return;
+      b[d.slot] = d.w;
+      if (b[other] === d.w) b[other] = '';
+    }
+    persist();
+    render();
+  },
+  movement(d) {
+    const b = drawerBuild();
+    if (!b) return;
+    b.movement = b.movement === d.move ? '' : d.move;
+    persist();
+    render();
+  },
+  'pick-class'(d) { openModal({ kind: 'picker', mode: d.mode, q: '', tier: '', fit: false, open: drawerBuild()?.finalClass || null }); },
+  'picker-tier'(d) { ui.modal.tier = d.tier; renderModal(); },
+  'picker-fit'() { ui.modal.fit = !ui.modal.fit; renderModal(); },
+  'job-expand'(d) { ui.modal.open = ui.modal.open === d.job ? null : d.job; renderPickerList(); },
+  pick(d) { if (ui.modal?.kind === 'picker' && ui.modal.mode === 'path') appendPath(d.job); else selectClass(d.job); },
+  'clear-class'() { selectClass(''); },
+  'class-info'(d, el) { openModal({ kind: 'class', job: d.job, fromDrawer: !!el.closest('#drawer') }); },
+  'tag-edit'() { ui.tagEdit = !ui.tagEdit; renderDrawer(); if (ui.tagEdit) $('#tag-input')?.focus(); },
+  'tag-remove'(d) { const id = ui.drawer.id; setTags(id, tagsOf(id).filter(t => t !== d.tag)); },
+  'tag-add'(d) {
+    const id = ui.drawer.id;
+    const value = d.tag || $('#tag-input')?.value || '';
+    if (!value.trim()) return;
+    setTags(id, [...tagsOf(id), value]);
+    $('#tag-input')?.focus();
+  },
+  'tag-reset'() { delete state.characterTags[ui.drawer.id]; persist(); render(); },
+  export() { exportState(); },
+  import() { $('#import-file').value = ''; $('#import-file').click(); },
+  'export-corrupt'() { download(corruptBackup, '만자천홍-저장원본-복구용.json'); },
+  'reset-ask'() {
+    openModal({ kind: 'confirm', title: '초기 편성으로 되돌릴까요?', ok: '초기화', okAct: 'reset-apply', danger: true, cancelAct: 'settings',
+      body: '<p>빌드·메모·수정한 태그가 모두 지워지고 처음 명단으로 돌아갑니다.</p><p>필요하면 먼저 내보내기로 백업하세요.</p>' });
+  },
+  'reset-apply'() {
+    snapshot();
+    const { theme } = state.settings;
+    state = C.initial(D);
+    state.settings.theme = theme;
+    corruptBackup = null;
+    ui.compare = [];
+    closeModal();
+    closeDrawer();
+    persist();
+    render();
+    toast('초기 편성으로 되돌렸습니다.', true);
+  },
+  'spoiler-on'() { state.settings.spoilers = true; persist(); render(); openModal({ kind: 'settings' }); },
+  'import-apply'() {
+    if (!ui.pendingImport) return;
+    snapshot();
+    state = ui.pendingImport;
+    state.settings.spoilers = false;
+    ui.pendingImport = null;
+    corruptBackup = null;
+    ui.compare = [];
+    closeModal();
+    closeDrawer();
+    persist();
+    render();
+    toast('백업을 불러왔습니다.', true);
+  },
+  undo() { undo(); },
+  'close-modal'() { closeModal(); }
+};
+
+document.addEventListener('click', ev => {
+  const el = ev.target.closest('[data-act]');
+  if (!el || el.disabled) return;
+  const fn = A[el.dataset.act];
+  if (fn) fn(el.dataset, el, ev);
 });
-document.addEventListener('dragstart',ev=>{const row=ev.target.closest('[data-drag]');if(!row)return;ev.dataTransfer.setData('text/plain',row.dataset.drag);ev.dataTransfer.effectAllowed='copyMove';});
-$('#squad').addEventListener('dragover',ev=>{ev.preventDefault();$('#squad').classList.add('dragover');});
-$('#squad').addEventListener('dragleave',ev=>{if(!$('#squad').contains(ev.relatedTarget))$('#squad').classList.remove('dragover');});
-$('#squad').addEventListener('drop',ev=>{
- ev.preventDefault();$('#squad').classList.remove('dragover');const id=ev.dataTransfer.getData('text/plain');if(!isVisible(id))return;
- const target=ev.target.closest('[data-drag]')?.dataset.drag;
- if(!getBuild(route,id))add(id);
- if(target&&target!==id){const list=state.routes[route],from=list.findIndex(b=>b.characterId===id),to=list.findIndex(b=>b.characterId===target);if(from>=0&&to>=0){list.splice(to,0,list.splice(from,1)[0]);save();render();}}
+document.addEventListener('input', ev => {
+  const t = ev.target;
+  if (t.id === 'search') { f.q = t.value; renderList(); return; }
+  if (t.id === 'picker-q') { ui.modal.q = t.value; renderPickerList(); return; }
+  if (t.dataset.bfield) {
+    const b = drawerBuild();
+    if (!b) return;
+    b[t.dataset.bfield] = t.value;
+    persistSoon();
+    renderSquad();
+    renderStats();
+    if (t.dataset.bfield === 'path') $('#path-chips').innerHTML = pathChips(b.path);
+  }
 });
-document.addEventListener('keydown',ev=>{
- const typing=/INPUT|TEXTAREA|SELECT/.test(ev.target.tagName);
- if(ev.key==='/'&&!typing&&!$('dialog[open]')){ev.preventDefault();setView('planner');setPane('catalog');$('#search').focus();}
- if((ev.ctrlKey||ev.metaKey)&&ev.key==='z'&&!typing&&undoState){ev.preventDefault();undo();}
+document.addEventListener('change', ev => {
+  const t = ev.target;
+  if (t.dataset.filter) { f[t.dataset.filter] = t.value; renderList(); return; }
+  if (t.id === 'sort') { ui.sort = t.value; saveUi(); renderList(); return; }
+  if (t.id === 'with-class') { ui.withClass = t.checked; saveUi(); renderDrawer(); return; }
+  if (t.id === 'spoiler-toggle') {
+    if (t.checked) {
+      t.checked = false;
+      openModal({ kind: 'confirm', title: '전체 캐릭터를 표시할까요?', ok: '표시', okAct: 'spoiler-on', cancel: '보호 유지', cancelAct: 'settings',
+        body: '<p>3부 이후 합류하거나 합류 시점이 확인되지 않은 캐릭터가 목록에 나타납니다.</p><p>설정에서 언제든 다시 숨길 수 있습니다.</p>' });
+    } else {
+      state.settings.spoilers = false;
+      ui.compare = ui.compare.filter(isVisible);
+      persist();
+      render();
+      renderModal();
+    }
+  }
 });
-$$('dialog').forEach(d=>d.addEventListener('click',ev=>{if(ev.target!==d)return;const r=d.getBoundingClientRect();if(ev.clientX<r.left||ev.clientX>r.right||ev.clientY<r.top||ev.clientY>r.bottom)d.close();}));
-window.addEventListener('storage',ev=>{if(ev.key===KEY&&ev.newValue){$('#storage-warning').hidden=false;$('#storage-warning').textContent='다른 탭에서 편성이 변경되었습니다. 이 탭의 편성을 내보낸 뒤 새로고침하면 최신 저장을 읽을 수 있습니다.';}});
-for(const r of D.routes)$('#assignment-filter').insertAdjacentHTML('beforeend',`<option value="route:${r.id}">${r.name} 배정</option>`);
-renderFilters();render();
+document.addEventListener('keydown', ev => {
+  const t = ev.target;
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName);
+  if (t.id === 'tag-input' && ev.key === 'Enter') { ev.preventDefault(); A['tag-add']({}); return; }
+  if (t.id === 'search' && ev.key === 'Escape' && t.value) { ev.preventDefault(); t.value = ''; f.q = ''; renderList(); return; }
+  if (t.dataset?.handle && (ev.key === 'ArrowUp' || ev.key === 'ArrowDown')) {
+    ev.preventDefault();
+    const id = t.dataset.handle;
+    moveBy(id, ev.key === 'ArrowUp' ? -1 : 1);
+    $(`[data-handle="${id}"]`)?.focus();
+    return;
+  }
+  if ($('#modal').open) return;
+  if (ev.key === 'Escape' && ui.drawer) { ev.preventDefault(); closeDrawer(); return; }
+  if (typing) return;
+  if (ev.key === '/') { ev.preventDefault(); if (ui.drawer) closeDrawer(); focusSearch(); }
+  if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'z' && ui.undo) { ev.preventDefault(); undo(); }
+});
+
+/* ---------- drag & drop ---------- */
+// Mouse: drag a character from the list into the squad (HTML5 DnD).
+document.addEventListener('dragstart', ev => {
+  const row = ev.target.closest?.('[data-drag]');
+  if (!row) return;
+  ev.dataTransfer.setData('text/plain', row.dataset.drag);
+  ev.dataTransfer.effectAllowed = 'copy';
+});
+const squadCol = $('#squad-col');
+squadCol.addEventListener('dragover', ev => {
+  if (!ev.dataTransfer.types.includes('text/plain')) return;
+  ev.preventDefault();
+  squadCol.classList.add('dragover');
+});
+squadCol.addEventListener('dragleave', ev => { if (!squadCol.contains(ev.relatedTarget)) squadCol.classList.remove('dragover'); });
+squadCol.addEventListener('drop', ev => {
+  ev.preventDefault();
+  squadCol.classList.remove('dragover');
+  const id = ev.dataTransfer.getData('text/plain');
+  if (!isVisible(id)) return;
+  insertAt(id, ev.target.closest('.squad-row')?.dataset.id);
+});
+// Mouse + touch: reorder squad rows by the grip handle.
+$('#squad-list').addEventListener('pointerdown', ev => {
+  const handle = ev.target.closest('[data-handle]');
+  if (!handle || ev.button > 0) return;
+  ev.preventDefault();
+  const list = $('#squad-list');
+  const row = handle.closest('.squad-row');
+  const scroller = getComputedStyle(squadCol).overflowY === 'auto' ? squadCol : null;
+  const pid = ev.pointerId;
+  let y = ev.clientY, moved = false, raf = 0;
+  row.classList.add('dragging');
+  document.body.classList.add('sorting');
+  const place = () => {
+    const rows = $$('.squad-row', list).filter(r => r !== row);
+    const before = rows.find(r => { const rc = r.getBoundingClientRect(); return y < rc.top + rc.height / 2; });
+    if (before) { if (row.nextElementSibling !== before) { list.insertBefore(row, before); moved = true; } }
+    else if (list.lastElementChild !== row) { list.appendChild(row); moved = true; }
+  };
+  const tick = () => {
+    const top = scroller ? scroller.getBoundingClientRect().top : $('#topbar').offsetHeight;
+    const bottom = scroller ? scroller.getBoundingClientRect().bottom : innerHeight - (isMobile() ? 62 : 0);
+    const dy = y < top + 56 ? -10 : y > bottom - 56 ? 10 : 0;
+    if (dy) scroller ? scroller.scrollBy(0, dy) : scrollBy(0, dy);
+    place();
+    raf = requestAnimationFrame(tick);
+  };
+  raf = requestAnimationFrame(tick);
+  // Listen on window: moving the row in the DOM drops any pointer capture on the handle.
+  const onMove = e => { if (e.pointerId !== pid) return; e.preventDefault(); y = e.clientY; place(); };
+  const onUp = e => {
+    if (e.pointerId !== pid) return;
+    cancelAnimationFrame(raf);
+    removeEventListener('pointermove', onMove);
+    removeEventListener('pointerup', onUp);
+    removeEventListener('pointercancel', onUp);
+    document.body.classList.remove('sorting');
+    row.classList.remove('dragging');
+    if (moved) {
+      setVisibleOrder(ui.route, $$('.squad-row', list).map(r => r.dataset.id));
+      persist();
+    }
+    render();
+  };
+  addEventListener('pointermove', onMove, { passive: false });
+  addEventListener('pointerup', onUp);
+  addEventListener('pointercancel', onUp);
+});
+
+/* ---------- boot ---------- */
+function render() {
+  applyTheme();
+  renderRoutes();
+  renderView();
+  renderFilterPanel();
+  renderList();
+  renderSquad();
+  renderStats();
+  if (ui.view === 'overview') renderOverview();
+  renderDrawer();
+  if (ui.modal && ['compare', 'settings', 'class'].includes(ui.modal.kind)) renderModal();
+}
+
+$('#settings-btn').innerHTML = I.gear;
+$('.search-icon').innerHTML = I.search;
+$$('[data-icon]').forEach(el => { el.outerHTML = I[el.dataset.icon]; });
+$('#sort').innerHTML = options(SORTS, ui.sort);
+new ResizeObserver(() => document.documentElement.style.setProperty('--hh', `${$('#topbar').offsetHeight}px`)).observe($('#topbar'));
+if (corruptBackup) setStatus('임시 편집 중', true);
+else if (storageError) setStatus('저장 실패', true);
+renderBanner();
+render();
 })();
