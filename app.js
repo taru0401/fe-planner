@@ -12,7 +12,12 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 
 const chars = new Map(D.characters.map(c => [c.id, c]));
 const jobs = new Map(D.classes.map(j => [j.id, j]));
-const routes = new Map(D.routes.map(r => [r.id, r]));
+// Parts 1-2 are planned per route; part 3 is one shared army, handled as a fifth tab.
+const P3 = { id: 'part3', name: '3부', color: '#c9a24d' };
+const TABS = [...D.routes, P3];
+const routes = new Map(TABS.map(r => [r.id, r]));
+// Master classes unlocked later in part 3 through temple subquests (confirmed ones only).
+const LATE_CLASSES = new Set(['배틀 몽크', '소드 마스터', '그레이트 나이트', '발키리움']);
 const STAT_KEYS = C.STATS.map(([k]) => k);
 const PROFS = ['검', '창', '도끼', '활', '격투', '흑마법', '백마법', '기마', '비행', '중장', '보병', '지휘'];
 const QUICK = ['물리', '마법', '활', '기병', '비행', '중장', '힐러'];
@@ -42,7 +47,8 @@ const I = {
   shield: svg('<path d="M12 3 20 6v6c0 4.8-3.4 8-8 9-4.6-1-8-4.2-8-9V6Z"/>'),
   bars: svg('<path d="M5 20v-8M12 20V5M19 20v-12"/>'),
   grid: svg('<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>'),
-  pencil: svg('<path d="M4 20h4L19 9l-4-4L4 16Z"/><path d="m13.5 6.5 4 4"/>')
+  pencil: svg('<path d="M4 20h4L19 9l-4-4L4 16Z"/><path d="m13.5 6.5 4 4"/>'),
+  star: svg('<path d="m12 3.6 2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.2-4.1 5.8-.8Z"/>')
 };
 
 /* ---------- state ---------- */
@@ -62,7 +68,7 @@ if (!hadSaved && matchMedia('(prefers-color-scheme: dark)').matches) state.setti
 const ui = {
   route: 'dietrich', view: 'planner', pane: 'squad', sort: 'default',
   filtersOpen: false, compare: [], undo: null,
-  drawer: null, withClass: true, tagEdit: false, modal: null, pendingImport: null
+  drawer: null, withClass: true, tagEdit: false, modal: null, pendingImport: null, p3scope: 'all'
 };
 try {
   const saved = JSON.parse(localStorage.getItem(UI_KEY) || '{}');
@@ -86,8 +92,16 @@ function safe(s) {
 const e = s => esc(safe(s));
 const isVisible = id => chars.has(id) && C.visible(chars.get(id), state);
 const visibleChars = () => D.characters.filter(c => C.visible(c, state));
-const shown = r => state.routes[r].filter(b => isVisible(b.characterId));
-const getBuild = (r, id) => state.routes[r].find(b => b.characterId === id);
+const isP3 = r => r === P3.id;
+const listOf = r => isP3(r) ? state.part3 : state.routes[r];
+function setList(r, list) { if (isP3(r)) state.part3 = list; else state.routes[r] = list; }
+const blankFor = (r, id) => isP3(r) ? C.blankPart3(id) : C.blankBuild(id);
+const teamName = r => isP3(r) ? '3부 명단' : `${routes.get(r).name} 부대`;
+const shown = r => listOf(r).filter(b => isVisible(b.characterId));
+const getBuild = (r, id) => listOf(r).find(b => b.characterId === id);
+const squadCount = s => state.part3.filter(b => b.squad === s).length;
+const finalCount = () => state.part3.filter(b => b.final).length;
+const classAllowed = (r, j) => !j || isP3(r) || j.rank <= C.PART2_MAX_RANK;
 const assigned = id => D.routes.filter(r => getBuild(r.id, id));
 const jobName = id => jobs.get(id)?.name || '';
 const cur = () => routes.get(ui.route);
@@ -228,7 +242,8 @@ function queuePush() {
   clearTimeout(sync.timer);
   sync.timer = setTimeout(() => syncNow(), 1500);
 }
-const sameData = (a, b) => JSON.stringify([a.routes, a.characterTags, a.settings.spoilers]) === JSON.stringify([b.routes, b.characterTags, b.settings.spoilers]);
+const sameData = (a, b) => JSON.stringify([a.routes, a.part3, a.characterTags, a.settings.spoilers]) === JSON.stringify([b.routes, b.part3, b.characterTags, b.settings.spoilers]);
+const teamCounts = st => TABS.map(r => `${esc(r.name)} ${(isP3(r.id) ? st.part3 : st.routes[r.id] || []).length}`).join(' · ');
 function applyRemote(raw, keepUndo) {
   let next;
   try { next = C.validateState(raw, D); } catch { throw new Error('동기화 데이터가 손상되었습니다.'); }
@@ -318,11 +333,10 @@ async function connectSync(token) {
     sync.status = 'idle';
     sync.pending = { token, id, remote };
     const when = t => t ? esc(new Date(t).toLocaleString('ko-KR')) : '기록 없음';
-    const counts = st => D.routes.map(r => `${esc(r.name)} ${(st.routes[r.id] || []).length}`).join(' · ');
     openModal({ kind: 'confirm', title: '어느 편성을 사용할까요?', ok: 'GitHub 편성 사용', okAct: 'sync-use-remote', cancel: '이 기기 편성 올리기', cancelAct: 'sync-use-local',
       body: `<p>GitHub와 이 기기에 서로 다른 편성이 있습니다. 선택하지 않은 쪽은 덮어씌워집니다.</p>
-        <div class="choice"><b>GitHub</b><span>마지막 수정 ${when(remote.updatedAt)}</span><span>${counts(next)}</span></div>
-        <div class="choice"><b>이 기기</b><span>마지막 수정 ${when(state.updatedAt)}</span><span>${counts(state)}</span></div>` });
+        <div class="choice"><b>GitHub</b><span>마지막 수정 ${when(remote.updatedAt)}</span><span>${teamCounts(next)}</span></div>
+        <div class="choice"><b>이 기기</b><span>마지막 수정 ${when(state.updatedAt)}</span><span>${teamCounts(state)}</span></div>` });
   } catch (err) {
     sync.status = 'idle';
     sync.error = err.message || '연결하지 못했습니다.';
@@ -356,58 +370,99 @@ function toast(msg, withUndo = false) {
 /* ---------- mutations ---------- */
 function add(id, r = ui.route) {
   if (!isVisible(id) || getBuild(r, id)) return;
-  state.routes[r].push(C.blankBuild(id));
+  listOf(r).push(blankFor(r, id));
   persist();
   render();
-  toast(`${chars.get(id).name} → ${routes.get(r).name} 부대에 추가`);
+  toast(`${chars.get(id).name} → ${teamName(r)}에 추가`);
 }
 function remove(id, r = ui.route) {
   if (!getBuild(r, id)) return;
   snapshot();
-  state.routes[r] = state.routes[r].filter(b => b.characterId !== id);
+  setList(r, listOf(r).filter(b => b.characterId !== id));
   persist();
   render();
-  toast(`${chars.get(id).name} · ${routes.get(r).name} 부대에서 제외`, true);
+  toast(`${chars.get(id).name} · ${teamName(r)}에서 제외`, true);
 }
 // Reorder only the visible builds; builds hidden by spoiler protection keep their slots.
 function setVisibleOrder(r, ids) {
-  const list = state.routes[r];
+  const list = listOf(r);
   const byId = new Map(list.map(b => [b.characterId, b]));
   const vis = new Set(ids);
   let k = 0;
-  state.routes[r] = list.map(b => vis.has(b.characterId) ? byId.get(ids[k++]) : b);
+  setList(r, list.map(b => vis.has(b.characterId) ? byId.get(ids[k++]) : b));
 }
+// Moves past the nearest visible neighbour in the same part-3 squad (routes have no squads).
 function moveBy(id, delta, r = ui.route) {
-  const ids = shown(r).map(b => b.characterId);
-  const i = ids.indexOf(id), j = i + delta;
-  if (i < 0 || j < 0 || j >= ids.length) return;
+  const vis = shown(r);
+  const ids = vis.map(b => b.characterId);
+  const i = ids.indexOf(id);
+  if (i < 0) return;
+  let j = i + delta;
+  while (j >= 0 && j < vis.length && vis[j].squad !== vis[i].squad) j += delta;
+  if (j < 0 || j >= vis.length) return;
   [ids[i], ids[j]] = [ids[j], ids[i]];
   setVisibleOrder(r, ids);
   persist();
   render();
 }
-function insertAt(id, beforeId) {
+function insertAt(id, beforeId, squad) {
   if (!isVisible(id)) return;
-  const existing = getBuild(ui.route, id);
-  if (existing && !beforeId) return;
-  if (!existing) {
-    state.routes[ui.route].push(C.blankBuild(id));
-    toast(`${chars.get(id).name} → ${cur().name} 부대에 추가`);
+  const r = ui.route;
+  let b = getBuild(r, id);
+  const isNew = !b;
+  if (!isP3(r)) squad = undefined;
+  if (!isNew && !beforeId && (squad === undefined || b.squad === squad)) return;
+  if (squad > 0 && b?.squad !== squad && squadCount(squad) >= C.SQUAD_SIZE) {
+    toast(`${squad}부대는 ${C.SQUAD_SIZE}명이 찼습니다.`);
+    if (!isNew) return;
+    squad = 0;
   }
+  if (isNew) {
+    b = blankFor(r, id);
+    listOf(r).push(b);
+    toast(`${chars.get(id).name} → ${teamName(r)}에 추가`);
+  }
+  if (squad !== undefined) b.squad = squad;
   if (beforeId && beforeId !== id) {
-    const ids = shown(ui.route).map(b => b.characterId).filter(x => x !== id);
+    const ids = shown(r).map(x => x.characterId).filter(x => x !== id);
     const k = ids.indexOf(beforeId);
     ids.splice(k < 0 ? ids.length : k, 0, id);
-    setVisibleOrder(ui.route, ids);
+    setVisibleOrder(r, ids);
   }
   persist();
   render();
+}
+function setSquad(id, squad) {
+  const b = getBuild(P3.id, id);
+  if (!b || b.squad === squad) return;
+  if (squad > 0 && squadCount(squad) >= C.SQUAD_SIZE) { toast(`${squad}부대는 ${C.SQUAD_SIZE}명이 찼습니다.`); return; }
+  b.squad = squad;
+  persist();
+  render();
+}
+function setFinal(id, on) {
+  const b = getBuild(P3.id, id);
+  if (!b || b.final === on) return;
+  if (on && finalCount() >= C.FINAL_SIZE) { toast(`최종장 출격은 ${C.FINAL_SIZE}명까지입니다.`); render(); return; }
+  b.final = on;
+  persist();
+  render();
+}
+// Everyone recruited on any route joins in part 3; bring those not yet listed onto the bench.
+const missingFromP3 = () => visibleChars().filter(c => assigned(c.id).length && !getBuild(P3.id, c.id));
+function importToP3() {
+  const add3 = missingFromP3();
+  if (!add3.length) return;
+  state.part3.push(...add3.map(c => C.blankPart3(c.id)));
+  persist();
+  render();
+  toast(`1+2부 동료 ${add3.length}명을 3부 대기 명단에 추가했습니다.`);
 }
 function selectClass(id) {
   const b = drawerBuild();
   if (!b) return;
   const j = id ? jobs.get(id) : null;
-  if (id && !j) return;
+  if ((id && !j) || !classAllowed(ui.drawer.route, j)) return;
   snapshot();
   const cleared = C.applyClass(b, j);
   persist();
@@ -452,7 +507,7 @@ function renderBanner() {
   b.innerHTML = msg ? `<span>${msg}</span><button class="btn sm" data-act="settings">백업 열기</button>` : '';
 }
 function renderRoutes() {
-  $('#route-tabs').innerHTML = D.routes.map(r => `<button class="route-tab" data-act="route" data-route="${r.id}" style="--c:${r.color}" aria-pressed="${r.id === ui.route}"><i></i><span>${esc(r.name)}</span><b>${shown(r.id).length}</b></button>`).join('');
+  $('#route-tabs').innerHTML = TABS.map(r => `<button class="route-tab${isP3(r.id) ? ' p3' : ''}" data-act="route" data-route="${r.id}" style="--c:${r.color}" aria-pressed="${r.id === ui.route}" title="${isP3(r.id) ? '3부 통합' : `${esc(r.name)} 루트 · 1+2부`}"><i></i><span>${esc(r.name)}</span><b>${shown(r.id).length}</b></button>`).join('');
 }
 function renderView() {
   const planner = ui.view === 'planner';
@@ -509,8 +564,8 @@ function sortChars(list) {
   return list;
 }
 function routeDots(id) {
-  const names = assigned(id).map(r => r.name).join(' · ') || '미배정';
-  return `<span class="route-dots" role="img" aria-label="${esc(names)}" title="${esc(names)}">${D.routes.map(r => `<i style="--c:${r.color}"${getBuild(r.id, id) ? ' class="on"' : ''}></i>`).join('')}</span>`;
+  const names = TABS.filter(r => getBuild(r.id, id)).map(r => r.name).join(' · ') || '미배정';
+  return `<span class="route-dots" role="img" aria-label="${esc(names)}" title="${esc(names)}">${TABS.map(r => `<i style="--c:${r.color}" class="${isP3(r.id) ? 'p3' : ''}${getBuild(r.id, id) ? ' on' : ''}"></i>`).join('')}</span>`;
 }
 function charRow(c) {
   const inRoute = !!getBuild(ui.route, c.id);
@@ -521,7 +576,7 @@ function charRow(c) {
     <button class="char-open" data-act="open" data-id="${c.id}">${avatar(c)}<span class="char-text"><span class="char-name">${e(c.name)}</span><span class="char-sub">${e(tags.slice(0, 3).join(' · ')) || '&nbsp;'}</span></span>${stat != null ? `<span class="stat-badge">${stat}</span>` : ''}</button>
     ${routeDots(c.id)}
     <button class="icon-btn cmp" data-act="compare" data-id="${c.id}" aria-pressed="${cmp}" title="비교 후보" aria-label="${e(c.name)} 비교 후보">${I.compare}</button>
-    <button class="add-btn${inRoute ? ' on' : ''}" data-act="${inRoute ? 'remove' : 'add'}" data-id="${c.id}" title="${inRoute ? '부대에서 제외' : '부대에 추가'}" aria-label="${e(c.name)} ${esc(cur().name)} 부대${inRoute ? '에서 제외' : '에 추가'}">${inRoute ? I.check : I.plus}</button>
+    <button class="add-btn${inRoute ? ' on' : ''}" data-act="${inRoute ? 'remove' : 'add'}" data-id="${c.id}" title="${esc(teamName(ui.route))}${inRoute ? '에서 제외' : '에 추가'}" aria-label="${e(c.name)} ${esc(teamName(ui.route))}${inRoute ? '에서 제외' : '에 추가'}">${inRoute ? I.check : I.plus}</button>
   </li>`;
 }
 function renderList() {
@@ -545,7 +600,7 @@ function renderFilterPanel() {
   if (!ui.filtersOpen) return;
   const allTags = [...new Set(visibleChars().flatMap(c => C.tags(c, state)))].sort((a, b) => a.localeCompare(b, 'ko'));
   p.innerHTML = `
-    <label>배정 루트<select data-filter="route">${options(D.routes.map(r => [r.id, r.name]), f.route, '전체')}</select></label>
+    <label>배정 루트<select data-filter="route">${options(TABS.map(r => [r.id, r.name]), f.route, '전체')}</select></label>
     <label>태그<select data-filter="tag">${options(allTags, f.tag, '전체')}</select></label>
     <label>특기<select data-filter="strength">${options(PROFS, f.strength, '전체')}</select></label>
     <label>약점<select data-filter="weakness">${options(PROFS, f.weakness, '전체')}</select></label>
@@ -565,51 +620,92 @@ function renderCompareBar() {
 }
 
 /* ---------- render: squad ---------- */
-function squadRow(b, i, a) {
+function squadRow(b, i, a, p3 = false) {
   const c = chars.get(b.characterId);
   const j = jobs.get(b.finalClass);
   const role = b.roleLabel || C.buildRoles(b).join(' · ');
   const weapons = [...new Set([b.primary, b.secondary].filter(Boolean))];
   const dupJob = j && a.classes[j.id]?.length >= DUP.job;
   return `<li class="squad-row${ui.drawer?.id === c.id ? ' active' : ''}" data-id="${c.id}">
-    <button class="handle" data-handle="${c.id}" aria-label="${e(c.name)} 순서 이동 (위아래 화살표)" title="끌어서 순서 변경">${I.grip}</button>
+    <button class="handle" data-handle="${c.id}" aria-label="${e(c.name)} 순서 이동 (위아래 화살표)" title="끌어서 순서${p3 ? '·부대' : ''} 변경">${I.grip}</button>
     <button class="squad-open" data-act="open" data-id="${c.id}" data-tab="build">
       <span class="squad-num">${i + 1}</span>${avatar(c)}
       <span class="squad-text"><span class="squad-name">${e(c.name)}</span><span class="squad-role${role ? '' : ' muted'}">${e(role || '역할 미정')}</span></span>
       <span class="squad-build">${j ? `<span class="pill job${dupJob ? ' dup' : ''}">${esc(j.name)}</span>` : '<span class="pill ghost">최종직 미정</span>'}${weapons.map(w => `<span class="pill">${esc(w)}</span>`).join('')}${b.movement ? `<span class="pill">${esc(b.movement)}</span>` : ''}</span>
     </button>
-    <button class="icon-btn remove" data-act="remove" data-id="${c.id}" aria-label="${e(c.name)} 부대에서 제외" title="부대에서 제외">${I.x}</button>
+    ${p3 ? `<button class="icon-btn star" data-act="p3-final" data-id="${c.id}" aria-pressed="${b.final}" aria-label="${e(c.name)} 최종장 출격" title="최종장 출격 ${b.final ? '해제' : '지정'}">${I.star}</button>` : ''}
+    <button class="icon-btn remove" data-act="remove" data-id="${c.id}" aria-label="${e(c.name)} ${esc(teamName(ui.route))}에서 제외" title="${esc(teamName(ui.route))}에서 제외">${I.x}</button>
   </li>`;
 }
+const dupAlerts = a => {
+  const d = dupes(a);
+  return d.length ? `<div class="alerts"><span class="alerts-label">겹침</span>${d.map(x => `<button data-act="pane" data-pane="stats">${esc(x.label)} ×${x.n}</button>`).join('')}</div>` : '';
+};
 function renderSquad() {
+  if (isP3(ui.route)) { renderPart3(); return; }
   const r = cur();
   const builds = shown(r.id);
   const a = C.analyze(builds);
-  const hidden = state.routes[r.id].length - builds.length;
+  const hidden = listOf(r.id).length - builds.length;
   $('#squad-title').textContent = `${r.name} 부대`;
-  $('#squad-sub').textContent = `${a.total}명 · 최종직 ${Object.keys(a.classes).length}종${a.unconfigured ? ` · 빌드 미정 ${a.unconfigured}명` : ''}`;
-  const d = dupes(a);
-  $('#squad-alerts').innerHTML = d.length
-    ? `<div class="alerts"><span class="alerts-label">겹침</span>${d.map(x => `<button data-act="pane" data-pane="stats">${esc(x.label)} ×${x.n}</button>`).join('')}</div>`
-    : '';
-  $('#squad-list').innerHTML = builds.length
+  $('#squad-sub').textContent = `1+2부 · ${a.total}명 · 최종직 ${Object.keys(a.classes).length}종${a.unconfigured ? ` · 빌드 미정 ${a.unconfigured}명` : ''}`;
+  $('#squad-alerts').innerHTML = dupAlerts(a);
+  $('#squad-body').innerHTML = `<ol class="squad-list">${builds.length
     ? builds.map((b, i) => squadRow(b, i, a)).join('')
-    : `<li class="squad-empty">아직 편성한 동료가 없습니다.<button class="btn sm primary" data-act="focus-search">동료 찾기</button></li>`;
+    : '<li class="squad-empty">아직 편성한 동료가 없습니다.<button class="btn sm primary" data-act="focus-search">동료 찾기</button></li>'}</ol>`;
+  $('#squad-hidden').hidden = !hidden;
+  $('#squad-hidden').textContent = `스포일러 보호로 ${hidden}명이 숨겨져 있습니다.`;
+}
+function renderPart3() {
+  const builds = shown(P3.id);
+  const hidden = state.part3.length - builds.length;
+  const placed = builds.filter(b => b.squad).length;
+  const missing = missingFromP3().length;
+  $('#squad-title').textContent = '3부 통합 부대';
+  $('#squad-sub').textContent = `명단 ${builds.length}명 · 부대 배치 ${placed}명 · 최종장 ${finalCount()}/${C.FINAL_SIZE}`;
+  $('#squad-alerts').innerHTML = '';
+  if (!builds.length) {
+    $('#squad-body').innerHTML = `<div class="squad-empty">3부에서 쓸 동료를 모아 ${C.SQUADS}개 부대(각 ${C.SQUAD_SIZE}명)로 나누고, 최종장 ${C.FINAL_SIZE}명을 고릅니다.
+      ${missing ? `<button class="btn primary" data-act="p3-import">1+2부 동료 ${missing}명 불러오기</button>` : ''}<button class="btn sm" data-act="focus-search">동료 찾기</button></div>`;
+  } else {
+    const group = s => {
+      const bs = builds.filter(b => b.squad === s);
+      const a = C.analyze(bs);
+      const d = s ? dupes(a) : [];
+      return `<section class="squad-group${s ? '' : ' bench'}">
+        <div class="group-head"><h3>${s ? `${s}부대` : '대기'}</h3><span class="cap${s && bs.length >= C.SQUAD_SIZE ? ' full' : ''}">${s ? `${bs.length}/${C.SQUAD_SIZE}` : `${bs.length}명`}</span>
+          ${d.length ? `<span class="group-dups">${d.map(x => `<span class="pill dup">${esc(x.label)} ×${x.n}</span>`).join('')}</span>` : ''}</div>
+        <ol class="squad-list" data-squad="${s}">${bs.map((b, i) => squadRow(b, i, a, true)).join('')}<li class="slot-empty">${s ? '비어 있음 · 여기로 끌어오기' : '대기 중인 동료 없음'}</li></ol>
+      </section>`;
+    };
+    $('#squad-body').innerHTML = [1, 2, 3, 4, 5, 0].map(group).join('')
+      + (missing ? `<button class="btn sm p3-more" data-act="p3-import">${I.plus}3부 명단에 없는 1+2부 동료 ${missing}명 불러오기</button>` : '');
+  }
   $('#squad-hidden').hidden = !hidden;
   $('#squad-hidden').textContent = `스포일러 보호로 ${hidden}명이 숨겨져 있습니다.`;
 }
 
 /* ---------- render: stats ---------- */
+function statBuilds() {
+  if (!isP3(ui.route)) return shown(ui.route);
+  const all = shown(P3.id), s = ui.p3scope;
+  if (s === 'final') return all.filter(b => b.final);
+  if (s !== 'all') return all.filter(b => b.squad === Number(s));
+  return all;
+}
 function renderStats() {
   const r = cur();
-  const builds = shown(r.id);
+  const p3 = isP3(r.id);
+  const builds = statBuilds();
   const a = C.analyze(builds);
   const barRow = (label, n, dupAt) => `<div class="bar-row${n ? '' : ' zero'}${dupAt && n >= dupAt ? ' dup' : ''}"><span>${esc(label)}</span><span class="bar"><i style="width:${a.total ? Math.min(100, n / a.total * 100) : 0}%"></i></span><b>${n}</b></div>`;
   const tile = (label, n, dupAt) => `<div class="tile${n ? '' : ' zero'}${dupAt && n >= dupAt ? ' dup' : ''}"><b>${n}</b><span>${esc(label)}</span></div>`;
   const groups = Object.entries(a.classes).sort((x, y) => y[1].length - x[1].length || jobName(x[0]).localeCompare(jobName(y[0]), 'ko'));
   const todo = builds.filter(b => missingParts(b).length);
+  const scopes = [['all', '전체'], ...[1, 2, 3, 4, 5].map(n => [String(n), `${n}부대`]), ['final', '최종장']];
   $('#stats').innerHTML = `<div class="stats-inner">
-    <div class="col-head"><div><h2>부대 분석</h2><p class="col-sub">${esc(r.name)} 부대 기준</p></div></div>
+    <div class="col-head"><div><h2>${p3 ? '3부 분석' : '부대 분석'}</h2><p class="col-sub">${p3 ? '범위를 골라 부대별로 확인하세요' : `${esc(r.name)} 부대 · 1+2부 기준`}</p></div></div>
+    ${p3 ? `<div class="chips scope">${scopes.map(([k, n]) => `<button class="chip" data-act="p3-scope" data-scope="${k}" aria-pressed="${ui.p3scope === k}">${n}</button>`).join('')}</div>` : ''}
     <div class="kpis">
       <div class="kpi"><b>${a.total}</b><span>인원</span></div>
       <div class="kpi"><b>${Object.keys(a.classes).length}</b><span>최종직 종류</span></div>
@@ -631,6 +727,7 @@ function renderOverview() {
   const vis = visibleChars();
   const multi = vis.filter(c => assigned(c.id).length > 1);
   const unused = vis.filter(c => !assigned(c.id).length);
+  const p3 = shown(P3.id);
   const groups = [
     ['인원', [['인원', a => a.total]]],
     ['역할', C.ROLES.map(x => [x, a => a.roles[x], DUP.role])],
@@ -641,10 +738,12 @@ function renderOverview() {
   $('#overview').innerHTML = `
     <div class="ov-cards">${D.routes.map(r => {
       const a = counts[r.id];
-      return `<button class="ov-card" style="--c:${r.color}" data-act="route" data-route="${r.id}"><h3>${esc(r.name)}</h3><div class="big">${a.total}<small>명</small></div><p>최종직 ${Object.keys(a.classes).length}종 · 빌드 미정 ${a.unconfigured}명</p></button>`;
-    }).join('')}</div>
+      return `<button class="ov-card" style="--c:${r.color}" data-act="route" data-route="${r.id}"><h3>${esc(r.name)} <small>1+2부</small></h3><div class="big">${a.total}<small>명</small></div><p>최종직 ${Object.keys(a.classes).length}종 · 빌드 미정 ${a.unconfigured}명</p></button>`;
+    }).join('')}
+      <button class="ov-card" style="--c:${P3.color}" data-act="route" data-route="${P3.id}"><h3>3부 통합</h3><div class="big">${p3.length}<small>명</small></div><p>부대 배치 ${p3.filter(b => b.squad).length}명 · 최종장 ${finalCount()}/${C.FINAL_SIZE}</p></button>
+    </div>
     <div class="ov-grid">
-      <section class="panel"><h2>루트별 구성 비교</h2>
+      <section class="panel"><h2>1+2부 루트별 구성 비교</h2>
         <div class="table-wrap"><table class="table">
           <thead><tr><th></th>${D.routes.map(r => `<th style="--c:${r.color}"><i></i>${esc(r.name)}</th>`).join('')}</tr></thead>
           <tbody>${groups.map(([title, rows]) => `${title !== '인원' ? `<tr class="group"><th colspan="${D.routes.length + 1}">${title}</th></tr>` : ''}${rows.map(([n, fn, dupAt]) => `<tr><th>${esc(n)}</th>${D.routes.map(r => { const v = fn(counts[r.id]); return `<td class="${v ? '' : 'zero'}${dupAt && v >= dupAt ? ' dup' : ''}">${v}</td>`; }).join('')}</tr>`).join('')}`).join('')}</tbody>
@@ -741,38 +840,56 @@ function weaponChips(b, slot, allowed) {
   if (value && !allowed.includes(value)) chips.push(`<button class="chip bad" data-act="weapon" data-slot="${slot}" data-w="${esc(value)}" title="이 병종은 사용할 수 없습니다. 눌러서 해제" aria-pressed="true">${esc(value)}</button>`);
   return `<div class="chips">${chips.join('')}</div>`;
 }
+function historyBlock(c) {
+  const rows = D.routes.map(r => [r, getBuild(r.id, c.id)]).filter(([, b]) => b);
+  return `<div class="field"><span class="f-label">1+2부 기록 <small>인과 융합 때 합쳐지는 버전들</small></span>
+    ${rows.length ? `<div class="history">${rows.map(([r, b]) => {
+      const j = jobs.get(b.finalClass);
+      const w = [...new Set([b.primary, b.secondary].filter(Boolean))];
+      return `<button class="history-row" data-act="drawer-route" data-route="${r.id}"><span class="route-label" style="--c:${r.color}"><i></i>${esc(r.name)}</span><b>${j ? esc(j.name) : '직업 미정'}</b><span>${e([b.roleLabel, ...w].filter(Boolean).join(' · '))}</span></button>`;
+    }).join('')}</div>` : '<p class="note">1+2부 루트에 배정되지 않았습니다.</p>'}</div>`;
+}
 function buildBlock(c, d) {
   const r = routes.get(d.route);
+  const p3 = isP3(r.id);
   const b = getBuild(d.route, c.id);
-  const pick = `<div class="route-pick">${D.routes.map(x => `<button data-act="drawer-route" data-route="${x.id}" style="--c:${x.color}" class="${getBuild(x.id, c.id) ? 'member' : ''}" aria-pressed="${x.id === d.route}"><i></i>${esc(x.name)}</button>`).join('')}</div>`;
+  const title = p3 ? '3부 통합 빌드' : '1+2부 루트별 빌드';
+  const pick = `<div class="route-pick">${TABS.map(x => `<button data-act="drawer-route" data-route="${x.id}" style="--c:${x.color}" class="${getBuild(x.id, c.id) ? 'member' : ''}" aria-pressed="${x.id === d.route}"><i></i>${esc(x.name)}</button>`).join('')}</div>`;
   if (!b) {
-    return `<div class="block-head"><h3>루트별 빌드</h3></div>${pick}
-      <div class="build-empty">${esc(r.name)} 부대에 없는 캐릭터입니다.<button class="btn primary" data-act="add" data-id="${c.id}" data-route="${r.id}">${I.plus}${esc(r.name)} 부대에 추가</button></div>`;
+    return `<div class="block-head"><h3>${title}</h3></div>${pick}
+      <div class="build-empty">${esc(teamName(r.id))}에 없는 캐릭터입니다.<button class="btn primary" data-act="add" data-id="${c.id}" data-route="${r.id}">${I.plus}${esc(teamName(r.id))}에 추가</button></div>
+      ${p3 ? historyBlock(c) : ''}`;
   }
   const j = jobs.get(b.finalClass);
   const allowed = C.classWeapons(j);
-  const ids = shown(d.route).map(x => x.characterId);
+  const ids = shown(d.route).filter(x => x.squad === b.squad).map(x => x.characterId);
   const pos = ids.indexOf(c.id);
-  return `<div class="block-head"><h3>루트별 빌드</h3></div>${pick}
+  const p3Fields = p3 ? `
+    <div class="field"><span class="f-label">부대</span><div class="seg squad-seg" role="group" aria-label="부대">${[1, 2, 3, 4, 5, 0].map(n => `<button data-act="p3-squad" data-squad="${n}" aria-pressed="${b.squad === n}">${n ? `${n}부대` : '대기'}</button>`).join('')}</div></div>
+    <div class="field"><label class="switch-row"><span>최종장 출격 <small class="muted">${finalCount()}/${C.FINAL_SIZE}</small></span><span class="switch"><input type="checkbox" id="p3-final"${b.final ? ' checked' : ''}><span></span></span></label></div>
+    ${historyBlock(c)}` : '';
+  return `<div class="block-head"><h3>${title}</h3></div>${pick}${p3Fields}
     <label class="field"><span class="f-label">역할 이름</span><input type="text" data-bfield="roleLabel" value="${esc(b.roleLabel)}" maxlength="150" placeholder="예: 딜탱, 마법 타조, 전열 지원"></label>
     <div class="field"><span class="f-label">집계 역할 <small>여러 개 선택</small></span><div class="chips">${C.ROLES.map(x => `<button class="chip" data-act="role" data-role="${x}" aria-pressed="${b.roles.includes(x)}">${x}</button>`).join('')}</div></div>
-    <div class="field"><span class="f-label">최종직</span>
+    <div class="field"><span class="f-label">${p3 ? '3부 최종직' : '2부 최종직 <small>상급직까지</small>'}</span>
       <div class="job-field">
         <button class="job-btn${j ? '' : ' empty-job'}" data-act="pick-class" data-mode="final">${j ? `<b>${esc(j.name)}</b><span>${esc(j.tier)} · ${esc(j.movementType || '이동 미수록')} · ${esc(j.weapons.join(' · ') || '무기 자료 없음')}</span>` : '<b>병종 선택</b><span>이동 타입 자동 적용 · 무기는 병종 사용 무기로 제한</span>'}</button>
         ${j ? `<button class="icon-btn" data-act="class-info" data-job="${j.id}" aria-label="${esc(j.name)} 병종 정보" title="병종 정보">${I.info}</button>` : ''}
-      </div></div>
+      </div>
+      ${j && !classAllowed(r.id, j) ? '<p class="hint warn">최상급직은 3부에서 열립니다. 3부 탭에서 지정하세요.</p>' : ''}
+      ${j && LATE_CLASSES.has(j.name) ? '<p class="hint">3부 중후반 서브퀘스트로 해금되는 병종입니다.</p>' : ''}</div>
     <div class="field"><span class="f-label">주무기${j && !j.weapons.length ? ' <small>무기 자료가 없어 전체 표시</small>' : ''}</span>${weaponChips(b, 'primary', allowed)}</div>
     <div class="field"><span class="f-label">보조무기</span>${weaponChips(b, 'secondary', allowed)}</div>
     <div class="field"><span class="f-label">이동 타입</span><div class="chips">${C.MOVEMENTS.map(x => `<button class="chip" data-act="movement" data-move="${x}" aria-pressed="${b.movement === x}">${x}</button>`).join('')}</div></div>
-    <div class="field"><span class="f-label">중간 전직 경로</span>
+    ${p3 ? '' : `<div class="field"><span class="f-label">중간 전직 경로</span>
       <div class="path-row"><input type="text" data-bfield="path" value="${esc(b.path)}" maxlength="3000" placeholder="병사 → 기갑 타조병 → 가디언"><button class="btn" data-act="pick-class" data-mode="path">${I.plus}병종</button></div>
-      <div class="path-chips" id="path-chips">${pathChips(b.path)}</div></div>
+      <div class="path-chips" id="path-chips">${pathChips(b.path)}</div></div>`}
     <label class="field"><span class="f-label">육성 메모</span><textarea data-bfield="notes" rows="4" maxlength="20000" placeholder="우선 훈련할 적성, 장비, 목표 등">${esc(b.notes)}</textarea></label>
     <div class="build-foot">
       <span class="order-btns">순서 ${pos + 1}/${ids.length}
         <button class="icon-btn" data-act="drawer-move" data-dir="-1" aria-label="위로"${pos <= 0 ? ' disabled' : ''}>${I.up}</button>
         <button class="icon-btn" data-act="drawer-move" data-dir="1" aria-label="아래로"${pos >= ids.length - 1 ? ' disabled' : ''}>${I.down}</button></span>
-      <button class="btn sm danger" data-act="remove" data-id="${c.id}" data-route="${r.id}">${esc(r.name)} 부대에서 제외</button>
+      <button class="btn sm danger" data-act="remove" data-id="${c.id}" data-route="${r.id}">${esc(teamName(r.id))}에서 제외</button>
     </div>`;
 }
 function renderDrawer(resetScroll = false) {
@@ -865,7 +982,7 @@ function classHtml() {
   const d = ui.modal.fromDrawer ? ui.drawer : null;
   const c = d ? chars.get(d.id) : null;
   const b = d ? drawerBuild() : null;
-  return `${mHead(esc(j.name), `${esc(j.tier)}${j.restrictions ? ` · ${esc(j.restrictions)} 전용` : ''}`)}
+  return `${mHead(esc(j.name), `${esc(j.tier)}${j.rank > C.PART2_MAX_RANK ? ' · 3부 해금' : ''}${LATE_CLASSES.has(j.name) ? ' (서브퀘스트)' : ''}${j.restrictions ? ` · ${esc(j.restrictions)} 전용` : ''}`)}
     <div class="m-body">
       <div class="facts">
         <div class="fact"><span>이동 타입</span>${esc(j.movementType || '미수록')}</div>
@@ -878,22 +995,25 @@ function classHtml() {
       <h3 class="sec-title">마스터 스킬</h3><p class="text-block">${esc(filled(j.master) || '자료 없음')}</p>
       ${j.skills.filter(filled).length ? `<h3 class="sec-title">병종 스킬</h3><p class="text-block">${esc(j.skills.filter(filled).join('\n'))}</p>` : ''}
     </div>
-    <div class="m-foot">${b && b.finalClass !== j.id ? `<button class="btn primary" data-act="pick" data-job="${j.id}">${esc(routes.get(d.route).name)} 최종직으로 선택</button>` : ''}<button class="btn" data-act="close-modal">닫기</button></div>`;
+    <div class="m-foot">${b && b.finalClass !== j.id && classAllowed(d.route, j) ? `<button class="btn primary" data-act="pick" data-job="${j.id}">${esc(routes.get(d.route).name)} ${isP3(d.route) ? '3부' : '2부'} 최종직으로 선택</button>` : ''}<button class="btn" data-act="close-modal">닫기</button></div>`;
 }
 function pickerHtml() {
   const m = ui.modal, d = ui.drawer, c = chars.get(d.id), b = drawerBuild();
-  return `${mHead(m.mode === 'final' ? '최종직 선택' : '전직 경로에 병종 추가', `${e(c.name)} · ${esc(routes.get(d.route).name)}`)}
+  const p3 = isP3(d.route);
+  const title = m.mode === 'path' ? '전직 경로에 병종 추가' : p3 ? '3부 최종직 선택' : '2부 최종직 선택';
+  return `${mHead(title, `${e(c.name)} · ${esc(routes.get(d.route).name)}${p3 ? '' : ' · 상급직까지'}`)}
     <div class="m-tools">
       <label class="search"><span class="search-icon">${I.search}</span><input id="picker-q" type="search" placeholder="병종 이름, 무기, 이동 타입" value="${esc(m.q)}" autocomplete="off"></label>
       <div class="chip-row">
         <button class="chip" data-act="picker-tier" data-tier="" aria-pressed="${!m.tier}">전체</button>
-        ${TIERS.map(([rank, tier]) => `<button class="chip" data-act="picker-tier" data-tier="${rank}" aria-pressed="${String(m.tier) === String(rank)}">${esc(tier)}</button>`).join('')}
+        ${pickerTiers().map(([rank, tier]) => `<button class="chip" data-act="picker-tier" data-tier="${rank}" aria-pressed="${String(m.tier) === String(rank)}">${esc(tier)}</button>`).join('')}
         <button class="chip" data-act="picker-fit" aria-pressed="${m.fit}" title="${e(c.name)}의 특기 무기를 쓰는 병종만">특기 무기</button>
       </div>
     </div>
     <div class="m-body"><div id="picker-list" class="job-list"></div></div>
     ${m.mode === 'final' && b?.finalClass ? '<div class="m-foot"><button class="btn" data-act="clear-class">최종직 비우기</button></div>' : ''}`;
 }
+const pickerTiers = () => TIERS.filter(([rank]) => isP3(ui.drawer.route) || rank <= C.PART2_MAX_RANK);
 function renderPickerList() {
   const m = ui.modal;
   if (m?.kind !== 'picker') return;
@@ -901,12 +1021,13 @@ function renderPickerList() {
   const q = m.q.trim().toLowerCase();
   const strengths = c.strengths || [];
   const list = D.classes.filter(j => {
+    if (!classAllowed(d.route, j)) return false;
     if (m.tier && String(j.rank) !== String(m.tier)) return false;
     if (m.fit && !j.weapons.some(w => strengths.includes(w))) return false;
     if (q && ![j.name, j.tier, j.movementType, ...j.weapons].join(' ').toLowerCase().includes(q)) return false;
     return true;
   });
-  const html = TIERS.map(([rank, tier]) => {
+  const html = pickerTiers().map(([rank, tier]) => {
     const rows = list.filter(j => j.rank === rank);
     if (!rows.length) return '';
     return `<p class="tier-title">${esc(tier)}</p>${rows.map(j => {
@@ -914,7 +1035,7 @@ function renderPickerList() {
       const open = m.open === j.id;
       return `<div class="job-row${current ? ' current' : ''}${open ? ' open' : ''}">
         <div class="job-row-top">
-          <button class="job-main" data-act="job-expand" data-job="${j.id}" aria-expanded="${open}">${I.chev}<span><b>${esc(j.name)}</b><span>${esc(j.movementType || '이동 미수록')} ${j.movement ?? ''} · ${esc(j.weapons.join(' · ') || '무기 자료 없음')}${j.restrictions ? ` · ${esc(j.restrictions)}` : ''}</span></span></button>
+          <button class="job-main" data-act="job-expand" data-job="${j.id}" aria-expanded="${open}">${I.chev}<span><b>${esc(j.name)}</b>${LATE_CLASSES.has(j.name) ? '<em class="late">서브퀘스트 해금</em>' : ''}<span>${esc(j.movementType || '이동 미수록')} ${j.movement ?? ''} · ${esc(j.weapons.join(' · ') || '무기 자료 없음')}${j.restrictions ? ` · ${esc(j.restrictions)}` : ''}</span></span></button>
           <button class="btn sm${current ? '' : ' primary'}" data-act="pick" data-job="${j.id}"${current ? ' disabled' : ''}>${current ? '선택됨' : m.mode === 'final' ? '선택' : '추가'}</button>
         </div>
         ${open ? `<div class="job-detail">${classTable(j, c)}<p><b>전직 조건</b> ${esc(filled(j.requirements) || '없음')}</p><p><b>마스터 스킬</b> ${esc(filled(j.master) || '자료 없음')}</p></div>` : ''}
@@ -940,7 +1061,7 @@ function compareHtml() {
         ${text('태그', c => e(C.tags(c, state).join(' · ') || '—'))}
         ${text('개인 특성', c => traitCell(c.personal))}
         ${text('유니크', c => traitCell(c.unique))}
-        ${text('배정', c => esc(assigned(c.id).map(x => x.name).join(' · ') || '미배정'))}
+        ${text('배정', c => esc(TABS.filter(x => getBuild(x.id, c.id)).map(x => x.name).join(' · ') || '미배정'))}
         <tr><th></th>${cs.map(c => `<td>${getBuild(r.id, c.id) ? `<span class="pill">${esc(r.name)} 편성됨</span>` : `<button class="btn sm primary" data-act="add" data-id="${c.id}">${esc(r.name)}에 추가</button>`}</td>`).join('')}</tr>
         <tr><th></th>${cs.map(c => `<td><button class="btn sm ghost" data-act="compare" data-id="${c.id}">빼기</button></td>`).join('')}</tr>
       </tbody></table></div></div>
@@ -1014,7 +1135,7 @@ $('#import-file').addEventListener('change', async ev => {
   try {
     if (file.size > 2_000_000) throw new Error('2MB 이하 파일만 불러올 수 있습니다.');
     ui.pendingImport = C.validateState(JSON.parse(await file.text()), D);
-    const counts = D.routes.map(r => `<span class="route-label" style="--c:${r.color}"><i></i>${esc(r.name)} ${ui.pendingImport.routes[r.id].length}명</span>`).join('');
+    const counts = TABS.map(r => `<span class="route-label" style="--c:${r.color}"><i></i>${esc(r.name)} ${(isP3(r.id) ? ui.pendingImport.part3 : ui.pendingImport.routes[r.id]).length}명</span>`).join('');
     openModal({ kind: 'confirm', title: '백업 불러오기', ok: '이 백업으로 교체', okAct: 'import-apply', cancel: '취소',
       body: `<p><b>${esc(file.name)}</b></p><div class="preview-counts">${counts}</div><p>현재 편성을 이 파일의 내용으로 교체합니다. 스포일러 보호는 켜진 상태로 적용됩니다.</p>` });
   } catch (err) {
@@ -1100,7 +1221,14 @@ const A = {
     persist();
     render();
   },
-  'pick-class'(d) { openModal({ kind: 'picker', mode: d.mode, q: '', tier: '', fit: false, open: drawerBuild()?.finalClass || null }); },
+  'pick-class'(d) {
+    const p3 = isP3(ui.drawer.route) && d.mode === 'final';
+    openModal({ kind: 'picker', mode: d.mode, q: '', tier: p3 && !drawerBuild()?.finalClass ? String(C.PART2_MAX_RANK + 1) : '', fit: false, open: drawerBuild()?.finalClass || null });
+  },
+  'p3-squad'(d) { setSquad(ui.drawer.id, Number(d.squad)); },
+  'p3-final'(d) { const b = getBuild(P3.id, d.id); if (b) setFinal(d.id, !b.final); },
+  'p3-scope'(d) { ui.p3scope = d.scope; renderStats(); },
+  'p3-import'() { importToP3(); },
   'picker-tier'(d) { ui.modal.tier = d.tier; renderModal(); },
   'picker-fit'() { ui.modal.fit = !ui.modal.fit; renderModal(); },
   'job-expand'(d) { ui.modal.open = ui.modal.open === d.job ? null : d.job; renderPickerList(); },
@@ -1214,6 +1342,7 @@ document.addEventListener('change', ev => {
   if (t.dataset.filter) { f[t.dataset.filter] = t.value; renderList(); return; }
   if (t.id === 'sort') { ui.sort = t.value; saveUi(); renderList(); return; }
   if (t.id === 'with-class') { ui.withClass = t.checked; saveUi(); renderDrawer(); return; }
+  if (t.id === 'p3-final') { setFinal(ui.drawer.id, t.checked); return; }
   if (t.id === 'spoiler-toggle') {
     if (t.checked) {
       t.checked = false;
@@ -1268,14 +1397,15 @@ squadCol.addEventListener('drop', ev => {
   squadCol.classList.remove('dragover');
   const id = ev.dataTransfer.getData('text/plain');
   if (!isVisible(id)) return;
-  insertAt(id, ev.target.closest('.squad-row')?.dataset.id);
+  const squad = ev.target.closest('[data-squad]')?.dataset.squad;
+  insertAt(id, ev.target.closest('.squad-row')?.dataset.id, squad === undefined ? undefined : Number(squad));
 });
-// Mouse + touch: reorder squad rows by the grip handle.
-$('#squad-list').addEventListener('pointerdown', ev => {
+// Mouse + touch: reorder rows by the grip handle; in part 3 rows can also move between squads.
+squadCol.addEventListener('pointerdown', ev => {
   const handle = ev.target.closest('[data-handle]');
   if (!handle || ev.button > 0) return;
   ev.preventDefault();
-  const list = $('#squad-list');
+  const lists = $$('.squad-list', squadCol);
   const row = handle.closest('.squad-row');
   const scroller = getComputedStyle(squadCol).overflowY === 'auto' ? squadCol : null;
   const pid = ev.pointerId;
@@ -1283,10 +1413,15 @@ $('#squad-list').addEventListener('pointerdown', ev => {
   row.classList.add('dragging');
   document.body.classList.add('sorting');
   const place = () => {
-    const rows = $$('.squad-row', list).filter(r => r !== row);
-    const before = rows.find(r => { const rc = r.getBoundingClientRect(); return y < rc.top + rc.height / 2; });
-    if (before) { if (row.nextElementSibling !== before) { list.insertBefore(row, before); moved = true; } }
-    else if (list.lastElementChild !== row) { list.appendChild(row); moved = true; }
+    let target = lists[0], best = Infinity;
+    for (const l of lists) {
+      const rc = l.getBoundingClientRect();
+      const dist = y < rc.top ? rc.top - y : y > rc.bottom ? y - rc.bottom : 0;
+      if (dist < best) { best = dist; target = l; }
+    }
+    const before = $$('.squad-row', target).filter(r => r !== row).find(r => { const rc = r.getBoundingClientRect(); return y < rc.top + rc.height / 2; });
+    const anchor = before || target.querySelector('.slot-empty');
+    if (row.parentElement !== target || row.nextElementSibling !== anchor) { target.insertBefore(row, anchor); moved = true; }
   };
   const tick = () => {
     const top = scroller ? scroller.getBoundingClientRect().top : $('#topbar').offsetHeight;
@@ -1307,16 +1442,27 @@ $('#squad-list').addEventListener('pointerdown', ev => {
     removeEventListener('pointercancel', onUp);
     document.body.classList.remove('sorting');
     row.classList.remove('dragging');
-    if (moved) {
-      setVisibleOrder(ui.route, $$('.squad-row', list).map(r => r.dataset.id));
-      persist();
-    }
+    if (moved) commitOrder(lists);
     render();
   };
   addEventListener('pointermove', onMove, { passive: false });
   addEventListener('pointerup', onUp);
   addEventListener('pointercancel', onUp);
 });
+function commitOrder(lists) {
+  const r = ui.route;
+  const ids = [], squadOf = new Map();
+  for (const l of lists) for (const el of $$('.squad-row', l)) { ids.push(el.dataset.id); squadOf.set(el.dataset.id, Number(l.dataset.squad || 0)); }
+  if (isP3(r)) {
+    const counts = Array(C.SQUADS + 1).fill(0);
+    for (const b of state.part3) counts[squadOf.has(b.characterId) ? squadOf.get(b.characterId) : b.squad]++;
+    const full = counts.findIndex((n, s) => s > 0 && n > C.SQUAD_SIZE);
+    if (full > 0) { toast(`${full}부대는 ${C.SQUAD_SIZE}명까지입니다.`); return; }
+    for (const b of state.part3) if (squadOf.has(b.characterId)) b.squad = squadOf.get(b.characterId);
+  }
+  setVisibleOrder(r, ids);
+  persist();
+}
 
 /* ---------- boot ---------- */
 function render() {

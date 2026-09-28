@@ -9,12 +9,12 @@
   <script>try{var s=JSON.parse(localStorage.getItem('banshisenko-planner:v1'));document.documentElement.dataset.theme=(s&&s.settings&&s.settings.theme)||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light')}catch(e){}</script>
   <link rel="icon" href="icon.svg?v=21a4fd13251e" type="image/svg+xml">
   <link rel="stylesheet" href="fonts/pretendard/pretendard.css?v=2973bcae8026">
-  <link rel="stylesheet" href="styles.css?v=a4fbf7e50213">
+  <link rel="stylesheet" href="styles.css?v=57785c717c87">
   <script defer src="catalog.js?v=e07a9efd24f3"></script>
   <script defer src="portraits.js?v=d7a02b7227cc"></script>
   <script defer src="sync.js?v=1e0220183790"></script>
-  <script defer src="core.js?v=387b7d3b3fe8"></script>
-  <script defer src="app.js?v=c9073329a588"></script>
+  <script defer src="core.js?v=26231f939481"></script>
+  <script defer src="app.js?v=80f1fa11c4b4"></script>
 </head>
 <body>
 <header class="topbar" id="topbar">
@@ -74,7 +74,7 @@
         <button class="btn sm" data-act="focus-search">+ 동료 추가</button>
       </div>
       <div id="squad-alerts"></div>
-      <ol id="squad-list" class="squad-list"></ol>
+      <div id="squad-body"></div>
       <p id="squad-hidden" class="squad-hidden" hidden></p>
     </section>
 
