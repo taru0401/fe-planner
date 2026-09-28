@@ -61,6 +61,7 @@ GitHub Pages 주소를 PC나 모바일 브라우저에서 열면 됩니다. 로�
 
 - [cass07 만자천홍 데이터베이스](https://cass07.github.io/fe18-db/): 캐릭터·병종 성장률, 특성, 능력치 보정, 전직 요구치, 마스터 스킬
 - 1부 루트별 영입 체크리스트(GameWith 공략 교차검증, 2026-09-28): 영입 조건·주의사항·방법
+- [GameWith スカウト条件一覧](https://gamewith.jp/fefw/574062)·[cass07 영입 체크](https://cass07.github.io/fe18-db/recruit.html): 디트리히 루트 누디누, 2부 합류 캐릭터(키릭·네이선)의 루트별 영입 여부 보완
 - [파이어 엠블렘 마이너 갤러리 추천 선물 정리](https://gall.dcinside.com/mgallery/board/view/?id=fireemblem&no=748988): 좋아하는 선물
 - [redfreshet 만자천홍 도구](https://redfreshet.com/game-tools/fe-banshisenko/): 특기·약점, 사용 무기, 이동 타입·이동력, 합류 시점 보완
 - 카이 탈것 전체 정리(GameWith 교차검증, 2026-09-28): 탈것 성장률·능력치·먹이·입수처
