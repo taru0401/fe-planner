@@ -231,6 +231,44 @@ body[data-view="overview"] .route-tab[aria-pressed="true"] { background: transpa
 .recruit-row { display: grid; grid-template-columns: 92px minmax(0, 1fr); align-items: center; gap: 8px; font-size: 14px; }
 .recruit-row .route-label { justify-self: start; }
 .recruit-row.no > span:last-child { color: var(--muted); }
+button.recruit-row { width: 100%; text-align: left; padding: 3px 0; border-radius: 6px; }
+button.recruit-row:hover > span:last-child { color: var(--accent); }
+.recruit-focus { padding: 10px 12px; margin-bottom: 10px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); }
+.recruit-focus.no { opacity: .7; }
+.recruit-detail { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 4px 8px; margin: 8px 0 0; font-size: 14px; }
+.recruit-detail dt { font-weight: 700; color: var(--muted); font-size: 13px; line-height: 21px; }
+.recruit-detail dd { margin: 0; line-height: 1.5; }
+.recruit-detail .warn { color: var(--warn); }
+.gifts { margin-top: 10px; font-size: 14px; color: var(--text-2); }
+.gifts b { color: var(--text); margin-right: 4px; }
+
+/* recruitment schedule */
+.schedule { max-width: 1280px; margin: 0 auto; padding: 22px 24px 64px; }
+.sched-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.sched-top h2 { font-size: 22px; font-weight: 800; letter-spacing: -0.02em; }
+.sched-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
+.sched-group + .sched-group { margin-top: 18px; }
+.sched-group h3 { display: flex; align-items: baseline; gap: 8px; font-size: 15px; font-weight: 800; margin: 0 2px 8px; }
+.sched-group h3 small { font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.sched-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 8px; }
+.sched-card { padding: 10px 12px 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); }
+.sched-card.no { opacity: .6; }
+.sched-head { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; }
+.sched-head > span:nth-child(2) { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.sched-head b { font-size: 15.5px; }
+.sched-head small { font-size: 12px; color: var(--muted); }
+.sched-head:hover b { color: var(--accent); }
+.req { display: flex; gap: 4px; flex: none; }
+.req > span { padding: 3px 8px; border-radius: 7px; background: var(--surface-3); font-size: 12.5px; color: var(--text-2); white-space: nowrap; }
+.req b { font-size: 14px; color: var(--text); }
+.prep { position: sticky; top: calc(var(--hh) + 16px); }
+.prep-sec + .prep-sec { margin-top: 14px; }
+.prep-sec h3 { display: flex; justify-content: space-between; font-size: 14px; font-weight: 750; margin-bottom: 6px; }
+.prep-sec h3 small { font-size: 12.5px; color: var(--muted); font-weight: 600; }
+.prep-row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 8px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 13.5px; }
+.prep-row button { font-weight: 700; }
+.prep-row button:hover { color: var(--accent); }
+.prep-row span { grid-column: 2; color: var(--muted); font-size: 13px; }
 .sort { display: flex; align-items: center; gap: 6px; }
 .sort select { height: 30px; width: auto; font-size: 13px; padding: 0 24px 0 8px; border-color: var(--line); }
 
@@ -649,6 +687,8 @@ em.late { font-style: normal; font-size: 11.5px; font-weight: 700; color: var(--
   .scrim.show { opacity: 1; pointer-events: auto; }
 }
 @media (max-width: 1100px) and (min-width: 760px) {
+  .sched-layout { grid-template-columns: minmax(0, 1fr); }
+  .prep { position: static; }
   .ov-cards { grid-template-columns: repeat(3, 1fr); }
   .brand span { display: none; }
   .route-tab { padding: 0 12px; }
@@ -704,7 +744,7 @@ em.late { font-style: normal; font-size: 11.5px; font-weight: 700; color: var(--
 
   .bottom-nav {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 25;
-    display: grid; grid-template-columns: repeat(4, 1fr);
+    display: grid; grid-template-columns: repeat(5, 1fr);
     padding-bottom: env(safe-area-inset-bottom);
     background: var(--surface);
     border-top: 1px solid var(--line);
@@ -726,6 +766,12 @@ em.late { font-style: normal; font-size: 11.5px; font-weight: 700; color: var(--
   .m-foot { padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); }
 
   .overview { padding: 14px 12px 24px; }
+  .schedule { padding: 14px 12px 24px; }
+  .sched-layout { grid-template-columns: minmax(0, 1fr); }
+  .prep { position: static; }
+  .sched-grid { grid-template-columns: minmax(0, 1fr); }
+  .bottom-nav { grid-template-columns: repeat(5, 1fr); }
+  .bottom-nav button { font-size: 11.5px; }
   .ov-cards { grid-template-columns: repeat(2, 1fr); gap: 8px; }
   .ov-card { padding: 14px; }
   .ov-card .big { font-size: 28px; }

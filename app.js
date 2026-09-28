@@ -21,9 +21,12 @@ const LATE_CLASSES = new Set(['배틀 몽크', '소드 마스터', '그레이트
 const STAT_KEYS = C.STATS.map(([k]) => k);
 const PROFS = ['검', '창', '도끼', '활', '격투', '흑마법', '백마법', '기마', '비행', '중장', '보병', '지휘'];
 const QUICK = ['물리', '마법', '활', '기병', '비행', '중장', '힐러'];
-const RECRUIT = globalThis.FE_RECRUIT || {};
+const RECRUIT = { routes: {}, part3: {}, guide: [], names: {}, ...globalThis.FE_RECRUIT };
+const GIFTS = globalThis.FE_GIFTS || {};
 // Side-story leads cannot be recruited in parts 1-2 but join in part 3; they are known, not spoilers.
-for (const [id, r] of Object.entries(RECRUIT)) if (r.part3 && chars.has(id)) chars.get(id).sideStory = r.part3;
+for (const [id, text] of Object.entries(RECRUIT.part3)) if (chars.has(id)) chars.get(id).sideStory = text;
+// The recruitment checklist uses Namuwiki spellings; keep them searchable.
+for (const [id, name] of Object.entries(RECRUIT.names)) { const c = chars.get(id); if (c && !c.aliases.includes(name)) c.aliases.push(name); }
 const TIERS = [...new Map(D.classes.map(j => [j.rank, j.tier]))].sort((a, b) => a[0] - b[0]);
 const SORTS = [['default', '기본'], ['fame', '필요 명성 순'], ['name', '이름'], ...C.STATS.map(([k, n]) => [k, `${n} 높은 순`])];
 // A count at or above these marks is highlighted as overlap. It is a fact, not a verdict.
@@ -50,6 +53,7 @@ const I = {
   bars: svg('<path d="M5 20v-8M12 20V5M19 20v-12"/>'),
   grid: svg('<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>'),
   pencil: svg('<path d="M4 20h4L19 9l-4-4L4 16Z"/><path d="m13.5 6.5 4 4"/>'),
+  calendar: svg('<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>'),
   star: svg('<path d="m12 3.6 2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.2-4.1 5.8-.8Z"/>')
 };
 
@@ -70,7 +74,7 @@ if (!hadSaved && matchMedia('(prefers-color-scheme: dark)').matches) state.setti
 const ui = {
   route: 'dietrich', view: 'planner', pane: 'squad', sort: 'default',
   filtersOpen: false, compare: [], undo: null,
-  drawer: null, withClass: true, recruitOnly: true, modal: null, pendingImport: null, p3scope: 'all'
+  drawer: null, withClass: true, recruitOnly: true, schedAll: false, modal: null, pendingImport: null, p3scope: 'all'
 };
 try {
   const saved = JSON.parse(localStorage.getItem(UI_KEY) || '{}');
@@ -164,20 +168,31 @@ function missingParts(b) {
   if (!b.finalClass) m.push('최종직');
   return m;
 }
-// Recruitment on a route: ok = can join there; text = the condition shown in lists and details.
+// Recruitment on a route. ok = can join there; text = the short label for lists (fame and support only);
+// rec = the full checklist row (cond, block, how) for details and the schedule.
 function recruitOn(c, r) {
   if (isP3(r)) {
-    if (c.sideStory) return { ok: true, text: `3부 합류 · ${c.sideStory}` };
+    if (c.sideStory) return { ok: true, text: '3부 합류', rec: { cond: c.sideStory } };
     const rs = assigned(c.id).map(x => x.name);
     return { ok: true, text: rs.length ? `1+2부 ${rs.join(' · ')}` : '1+2부 미배정' };
   }
-  const rec = RECRUIT[c.id];
-  if (!rec) return c.availablePart === 2 ? { ok: true, text: '2부 합류', fame: 0 } : { ok: false, text: '영입 정보 없음' };
-  const v = rec[r];
-  if (!v) return { ok: false, text: rec.part3 ? `3부 합류 · ${rec.part3}` : '영입 불가' };
-  const [fame, support] = v;
-  if (fame <= 1 && !support) return { ok: true, text: '처음부터 합류', fame: 0 };
-  return { ok: true, text: `명성 ${fame} · 지원 ${support}${rec.note ? ` · ${rec.note}` : ''}`, fame };
+  const rec = RECRUIT.routes[r]?.[c.id];
+  if (!rec) {
+    if (c.availablePart === 2) return { ok: true, text: '2부 합류', fame: 0, part2: true };
+    return { ok: false, text: c.sideStory ? '3부 합류' : '영입 불가' };
+  }
+  if (rec.auto) return { ok: true, text: '스토리 합류', fame: 0, rec };
+  return { ok: true, text: `명성 ${rec.fame} · 지원 ${rec.support}`, fame: rec.fame, rec };
+}
+const hasExtra = rec => rec?.cond && !['없음', '스토리 자동 합류'].includes(rec.cond);
+function recruitDetail(x) {
+  const rec = x.rec;
+  if (!rec) return '';
+  return `<dl class="recruit-detail">
+    ${hasExtra(rec) ? `<dt>조건</dt><dd>${e(rec.cond)}</dd>` : ''}
+    ${rec.block ? `<dt class="warn">주의</dt><dd class="warn">${e(rec.block)}</dd>` : ''}
+    ${rec.how && rec.how !== '스토리 진행' ? `<dt>방법</dt><dd>${e(rec.how)}</dd>` : ''}
+  </dl>`;
 }
 function dupes(a) {
   const out = [];
@@ -530,11 +545,12 @@ function renderRoutes() {
 function renderView() {
   const planner = ui.view === 'planner';
   $('#planner').hidden = !planner;
-  $('#overview').hidden = planner;
+  $('#overview').hidden = ui.view !== 'overview';
+  $('#schedule').hidden = ui.view !== 'schedule';
   $('#planner').dataset.pane = ui.pane;
   document.body.dataset.view = ui.view;
   $$('[data-act="view"]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === ui.view)));
-  $$('#bottom-nav button').forEach(b => b.setAttribute('aria-pressed', String(planner ? b.dataset.pane === ui.pane : b.dataset.pane === 'overview')));
+  $$('#bottom-nav button').forEach(b => b.setAttribute('aria-pressed', String(planner ? b.dataset.pane === ui.pane : b.dataset.pane === ui.view)));
 }
 
 /* ---------- render: list ---------- */
@@ -578,7 +594,7 @@ function matches(c) {
 function sortChars(list) {
   if (ui.sort === 'name') return [...list].sort((a, b) => a.name.localeCompare(b.name, 'ko'));
   if (ui.sort === 'fame' && !isP3(ui.route)) {
-    const fame = c => { const x = recruitOn(c, ui.route); return x.ok ? x.fame ?? 0 : 99; };
+    const fame = c => { const x = recruitOn(c, ui.route); return !x.ok ? 99 : x.part2 ? 50 : x.fame ?? 0; };
     return [...list].sort((a, b) => fame(a) - fame(b));
   }
   if (STAT_KEYS.includes(ui.sort)) return [...list].sort((a, b) => (b.growth[ui.sort] ?? -1) - (a.growth[ui.sort] ?? -1));
@@ -754,6 +770,69 @@ function renderStats() {
   </div>`;
 }
 
+/* ---------- render: recruitment schedule ---------- */
+const goldOf = text => [...String(text).matchAll(/([\d,]+)\s*G/g)].reduce((n, m) => n + Number(m[1].replace(/,/g, '')), 0);
+function scheduleCard(c, x, inSquad) {
+  return `<article class="sched-card${x.ok ? '' : ' no'}">
+    <button class="sched-head" data-act="open" data-id="${c.id}">${avatar(c)}<span><b>${e(c.name)}</b>${inSquad ? '' : '<small>부대 밖</small>'}</span>
+      ${x.rec && !x.rec.auto ? `<span class="req"><span>명성 <b>${x.rec.fame}</b></span><span>지원 <b>${x.rec.support}</b></span></span>` : `<span class="req"><span>${e(x.text)}</span></span>`}</button>
+    ${recruitDetail(x)}${giftLine(c)}
+  </article>`;
+}
+function prepHtml(rows) {
+  const gold = rows.map(({ c, x }) => ({ c, g: goldOf(x.rec?.cond || '') })).filter(y => y.g);
+  const byType = {};
+  for (const { c, x } of rows) {
+    for (const g of RECRUIT.guide) {
+      const cond = x.rec?.cond || '';
+      // A guide row only counts when this route's condition actually asks for it.
+      const needed = g.type === '문답' ? /문답|흥정/.test(cond) : g.type === '외전' ? cond.includes(g.item.replace(' 외전', '')) : cond.includes(g.item);
+      if (!g.who.includes(c.id) || !needed) continue;
+      (byType[g.type] ??= []).push({ c, g, x });
+    }
+  }
+  const total = gold.reduce((n, y) => n + y.g, 0);
+  const sec = (type, fn) => byType[type]?.length ? `<section class="prep-sec"><h3>${type} <small>${byType[type].length}</small></h3>${byType[type].map(fn).join('')}</section>` : '';
+  const row = (who, what, how) => `<div class="prep-row"><button data-act="open" data-id="${who.id}">${e(who.name)}</button><b>${e(what)}</b>${how ? `<span>${e(how)}</span>` : ''}</div>`;
+  return `<aside class="panel prep"><h2>준비물 요약</h2>
+    ${total ? `<section class="prep-sec"><h3>골드 <small>합계 ${total.toLocaleString('ko-KR')}G</small></h3>${gold.map(y => row(y.c, `${y.g.toLocaleString('ko-KR')}G`, '')).join('')}</section>` : ''}
+    ${sec('아이템', ({ c, g, x }) => row(c, x.rec.cond, g.how))}
+    ${sec('부탁', ({ c, g }) => row(c, g.item, g.how))}
+    ${sec('외전', ({ c, g }) => row(c, g.item, g.how))}
+    ${sec('문답', ({ c, g }) => row(c, '문답', g.how))}
+    ${!total && !Object.keys(byType).length ? '<p class="note">따로 준비할 골드·아이템·부탁이 없습니다.</p>' : ''}
+  </aside>`;
+}
+function renderSchedule() {
+  const r = cur();
+  const el = $('#schedule');
+  if (isP3(r.id)) {
+    const leads = visibleChars().filter(c => c.sideStory);
+    el.innerHTML = `<div class="sched-top"><div><h2>3부 영입</h2><p class="col-sub">3부는 루트가 합쳐져 따로 스카우트하지 않습니다. 1부 외전 주인공은 외전을 클리어하면 3부에 합류합니다.</p></div></div>
+      <div class="sched-grid">${leads.map(c => scheduleCard(c, recruitOn(c, P3.id), true)).join('')}</div>`;
+    return;
+  }
+  const squadIds = new Set(shown(r.id).map(b => b.characterId));
+  const pool = ui.schedAll ? visibleChars().filter(c => squadIds.has(c.id) || recruitOn(c, r.id).ok) : [...squadIds].map(id => chars.get(id));
+  const rows = pool.map(c => ({ c, x: recruitOn(c, r.id) }));
+  const rank = x => !x.ok ? 999 : x.part2 ? 500 : x.fame ?? 0;
+  rows.sort((a, b) => rank(a.x) - rank(b.x) || (a.x.rec?.support ?? 0) - (b.x.rec?.support ?? 0));
+  const groups = [];
+  for (const row of rows) {
+    const k = rank(row.x);
+    const label = !row.x.ok ? '이 루트에서 영입 불가' : row.x.part2 ? '2부 합류' : k === 0 ? '스토리 합류' : `명성 ${k}`;
+    if (groups.at(-1)?.label !== label) groups.push({ label, rows: [] });
+    groups.at(-1).rows.push(row);
+  }
+  const scout = rows.filter(y => y.x.rec && !y.x.rec.auto).length;
+  el.innerHTML = `<div class="sched-top"><div><h2>${esc(r.name)} 영입 스케줄</h2><p class="col-sub">${ui.schedAll ? '영입 가능 전체' : '부대 편성'} ${rows.length}명 · 스토리 합류 ${rows.filter(y => y.x.rec?.auto).length}명 · 스카우트 ${scout}명</p></div>
+      <div class="seg" role="group" aria-label="범위"><button data-act="sched-all" data-val="0" aria-pressed="${!ui.schedAll}">부대 편성만</button><button data-act="sched-all" data-val="1" aria-pressed="${ui.schedAll}">영입 가능 전체</button></div></div>
+    <div class="sched-layout">
+      <div class="sched-main">${groups.length ? groups.map(g => `<section class="sched-group"><h3>${g.label}<small>${g.rows.length}명</small></h3><div class="sched-grid">${g.rows.map(({ c, x }) => scheduleCard(c, x, squadIds.has(c.id))).join('')}</div></section>`).join('') : '<div class="squad-empty">부대에 편성한 캐릭터가 없습니다.<button class="btn sm primary" data-act="view" data-view="planner">부대 편성으로</button></div>'}</div>
+      ${prepHtml(rows.filter(y => y.x.ok))}
+    </div>`;
+}
+
 /* ---------- render: overview ---------- */
 function renderOverview() {
   const counts = Object.fromEntries(D.routes.map(r => [r.id, C.analyze(shown(r.id))]));
@@ -843,11 +922,20 @@ function traitBlock(label, text) {
   if (!t.length) return `<div class="trait none"><span class="trait-label">${label}</span>없음</div>`;
   return `<div class="trait"><span class="trait-label">${label}</span><dl>${t.map(x => `<dt>${esc(x.name)}</dt>${x.body ? `<dd>${esc(x.body)}</dd>` : ''}`).join('')}</dl></div>`;
 }
-function recruitBlock(c) {
-  return `<div class="block"><h3>영입 조건</h3><div class="recruit-list">${D.routes.map(r => {
-    const x = recruitOn(c, r.id);
-    return `<div class="recruit-row${x.ok ? '' : ' no'}"><span class="route-label" style="--c:${r.color}"><i></i>${esc(r.name)}</span><span>${e(x.text)}</span></div>`;
-  }).join('')}${c.sideStory ? `<div class="recruit-row"><span class="route-label" style="--c:${P3.color}"><i></i>3부</span><span>${e(c.sideStory)} 후 합류</span></div>` : ''}</div></div>`;
+function giftLine(c) {
+  return GIFTS[c.id] ? `<p class="gifts"><b>좋아하는 선물</b> ${e(GIFTS[c.id])}</p>` : '';
+}
+function recruitBlock(c, current) {
+  const focus = D.routes.find(r => r.id === current);
+  const fx = focus && recruitOn(c, focus.id);
+  const others = D.routes.filter(r => r !== focus);
+  return `<div class="block"><h3>영입 조건</h3>
+    ${focus ? `<div class="recruit-focus${fx.ok ? '' : ' no'}"><div class="recruit-row"><span class="route-label" style="--c:${focus.color}"><i></i>${esc(focus.name)}</span><b>${e(fx.text)}</b></div>${recruitDetail(fx)}</div>` : ''}
+    <div class="recruit-list">${others.map(r => {
+      const x = recruitOn(c, r.id);
+      return `<button class="recruit-row${x.ok ? '' : ' no'}" data-act="drawer-route" data-route="${r.id}" title="${esc(r.name)} 빌드로 전환"><span class="route-label" style="--c:${r.color}"><i></i>${esc(r.name)}</span><span>${e(x.text)}${hasExtra(x.rec) ? ` · ${e(x.rec.cond)}` : ''}</span></button>`;
+    }).join('')}${c.sideStory ? `<div class="recruit-row"><span class="route-label" style="--c:${P3.color}"><i></i>3부</span><span>${e(c.sideStory)} 후 합류</span></div>` : ''}</div>
+    ${giftLine(c)}</div>`;
 }
 function pathChips(path) {
   return path.split(/→|->|>|＞|,/).map(s => s.trim()).filter(Boolean).map(n => {
@@ -944,7 +1032,7 @@ function renderDrawer(resetScroll = false) {
           <div class="apt"><span class="apt-label weak">약점</span><div class="chips">${(c.weaknesses || []).map(x => `<span class="pill weak-pill">${esc(x)}</span>`).join('') || '<span class="note">자료 없음</span>'}</div></div>
         </div>
         <div class="block"><h3>특성</h3>${traitBlock('개인', c.personal)}${traitBlock('유니크', c.unique)}</div>
-        ${recruitBlock(c)}
+        ${recruitBlock(c, d.route)}
       </section>
       <section class="d-build">${buildBlock(c, d)}</section>
     </div>`;
@@ -1174,10 +1262,10 @@ function focusSearch() {
   s.select();
 }
 const A = {
-  route(d) { ui.route = d.route; ui.view = 'planner'; saveUi(); if (ui.drawer) ui.drawer.route = d.route; render(); },
+  route(d) { ui.route = d.route; if (ui.view === 'overview') ui.view = 'planner'; saveUi(); if (ui.drawer) ui.drawer.route = d.route; render(); },
   view(d) { ui.view = d.view; render(); scrollTo(0, 0); },
   pane(d) {
-    if (d.pane === 'overview') ui.view = 'overview';
+    if (d.pane === 'overview' || d.pane === 'schedule') ui.view = d.pane;
     else { ui.view = 'planner'; ui.pane = d.pane; }
     render();
     scrollTo(0, 0);
@@ -1197,6 +1285,7 @@ const A = {
   'clear-compare'() { ui.compare = []; if (ui.modal?.kind === 'compare') closeModal(); renderList(); renderDrawer(); },
   assign(d) { f.assign = d.assign; renderList(); },
   quick(d) { f.quick = f.quick === d.quick ? '' : d.quick; renderList(); },
+  'sched-all'(d) { ui.schedAll = d.val === '1'; renderSchedule(); },
   'recruit-only'() { ui.recruitOnly = !ui.recruitOnly; saveUi(); renderList(); },
   'toggle-filters'() { ui.filtersOpen = !ui.filtersOpen; renderFilterPanel(); renderList(); },
   'reset-filters'() {
@@ -1476,6 +1565,7 @@ function render() {
   renderSquad();
   renderStats();
   if (ui.view === 'overview') renderOverview();
+  if (ui.view === 'schedule') renderSchedule();
   renderDrawer();
   if (ui.modal && ['compare', 'settings', 'class'].includes(ui.modal.kind)) renderModal();
 }

@@ -9,13 +9,14 @@
   <script>try{var s=JSON.parse(localStorage.getItem('banshisenko-planner:v1'));document.documentElement.dataset.theme=(s&&s.settings&&s.settings.theme)||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light')}catch(e){}</script>
   <link rel="icon" href="icon.svg?v=21a4fd13251e" type="image/svg+xml">
   <link rel="stylesheet" href="fonts/pretendard/pretendard.css?v=2973bcae8026">
-  <link rel="stylesheet" href="styles.css?v=57eaff3feeff">
+  <link rel="stylesheet" href="styles.css?v=37e698969cdc">
   <script defer src="catalog.js?v=e07a9efd24f3"></script>
   <script defer src="portraits.js?v=d7a02b7227cc"></script>
-  <script defer src="recruit.js?v=a99eb40dd0fc"></script>
+  <script defer src="gifts.js?v=cfaa283306c5"></script>
+  <script defer src="recruit.js?v=2d2d548e1370"></script>
   <script defer src="sync.js?v=1e0220183790"></script>
   <script defer src="core.js?v=ebbfb341ba9a"></script>
-  <script defer src="app.js?v=7805a0efa5d7"></script>
+  <script defer src="app.js?v=5124d67b2e0e"></script>
 </head>
 <body>
 <header class="topbar" id="topbar">
@@ -27,6 +28,7 @@
   <div class="top-actions">
     <div class="seg view-switch" role="group" aria-label="화면">
       <button data-act="view" data-view="planner">부대 편성</button>
+      <button data-act="view" data-view="schedule">영입 스케줄</button>
       <button data-act="view" data-view="overview">루트 비교</button>
     </div>
     <button id="save-status" class="save-status" data-act="settings" title="동기화·백업 설정" aria-live="polite"></button>
@@ -83,6 +85,7 @@
     <section class="col col-stats" id="stats" aria-label="부대 분석"></section>
   </div>
 
+  <div id="schedule" class="schedule" hidden></div>
   <div id="overview" class="overview" hidden></div>
 </main>
 
@@ -90,6 +93,7 @@
   <button data-act="pane" data-pane="list"><span data-icon="user"></span>캐릭터</button>
   <button data-act="pane" data-pane="squad"><span data-icon="shield"></span>부대</button>
   <button data-act="pane" data-pane="stats"><span data-icon="bars"></span>분석</button>
+  <button data-act="pane" data-pane="schedule"><span data-icon="calendar"></span>영입</button>
   <button data-act="pane" data-pane="overview"><span data-icon="grid"></span>루트 비교</button>
 </nav>
 
