@@ -66,7 +66,7 @@ GitHub Pages 주소를 PC나 모바일 브라우저에서 열면 됩니다. 로�
 - [redfreshet 만자천홍 도구](https://redfreshet.com/game-tools/fe-banshisenko/): 특기·약점, 사용 무기, 이동 타입·이동력, 합류 시점 보완
 - 카이 탈것 전체 정리(GameWith 교차검증, 2026-09-28): 탈것 성장률·능력치·먹이·입수처
 - [redfreshet 支援相手一覧](https://redfreshet.com/fe-banshisenko-support-list/) (2026-09-22): 지원회화 조합. 일본어 이름은 성장률이 같은 캐릭터로 짝지음
-- [만자천홍 육성 도감](https://fefw.azaws.workers.dev/): 초상화(기본 공개 범위 52명과 3부 합류 외전 주인공 4명)
+- [만자천홍 육성 도감](https://fefw.azaws.workers.dev/)·[GameWith](https://gamewith.jp/fefw/573109): 초상화 (도감에 없는 2명은 GameWith 이미지에 같은 배경색을 입힘)
 
 자료 기준: 2026-09-28. 외부 자료원에는 스포일러가 있을 수 있습니다. 게임 및 원자료의 권리는 각 권리자에게 있습니다.
 
