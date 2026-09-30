@@ -556,6 +556,8 @@ em.late { font-style: normal; font-size: 11.5px; font-weight: 700; color: var(--
 .block > h3 { margin-bottom: 10px; }
 .toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--text-2); cursor: pointer; }
 .toggle input { width: 16px; height: 16px; }
+.lv-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: -2px 0 10px; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.lv-row .seg button { height: 28px; padding: 0 10px; font-size: 12.5px; }
 
 .growth { display: grid; gap: 5px; }
 .g-row { display: grid; grid-template-columns: 38px minmax(0, 1fr) 64px; align-items: center; gap: 10px; font-size: 14px; height: 24px; }

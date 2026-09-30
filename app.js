@@ -38,6 +38,13 @@ const MOUNTS = new Map(MOUNT_DATA.mounts.map(m => [m.id, m]));
 const MOUNT_ROUTE = 'kai';
 const FAMILY_ORDER = ['말', '오르니우스', '천마', '비룡', '코끼리'];
 const CHARIOT = D.classes.find(j => j.name === '전차병')?.id;
+// 전차병의 길: the chariot's own growth bonus rises with the unit's level. Extra over the base class growth,
+// measured at Lv 25/35/45 on the Kai route (https://gall.dcinside.com/mgallery/board/view/?id=fireemblem&no=770011).
+const CHARIOT_LEVELS = {
+  25: {},
+  35: { hp: 10, str: 5, mg: 5, spd: 5, dex: 5, def: 10, cha: 5 },
+  45: { hp: 10, str: 15, mg: 5, spd: 5, dex: 10, def: 20, res: 5, lck: 5, cha: 10 }
+};
 const END_LABEL = { confirmed: '페어엔딩 확인', candidate: 'A 지원', pending: '단계 미확인', s: 'S 지원' };
 // Side-story leads cannot be recruited in parts 1-2 but join in part 3; they are known, not spoilers.
 for (const [id, text] of Object.entries(RECRUIT.part3)) if (chars.has(id)) chars.get(id).sideStory = text;
@@ -91,16 +98,17 @@ if (!hadSaved && matchMedia('(prefers-color-scheme: dark)').matches) state.setti
 const ui = {
   route: 'dietrich', view: 'planner', pane: 'squad', sort: 'default',
   filtersOpen: false, compare: [], undo: null,
-  drawer: null, withClass: true, recruitOnly: true, schedAll: false, modal: null, pendingImport: null, p3scope: 'all'
+  drawer: null, withClass: true, chariotLv: 25, recruitOnly: true, schedAll: false, modal: null, pendingImport: null, p3scope: 'all'
 };
 try {
   const saved = JSON.parse(localStorage.getItem(UI_KEY) || '{}');
   if (routes.has(saved.route)) ui.route = saved.route;
   if (SORTS.some(([k]) => k === saved.sort)) ui.sort = saved.sort;
   if (typeof saved.withClass === 'boolean') ui.withClass = saved.withClass;
+  if (CHARIOT_LEVELS[saved.chariotLv]) ui.chariotLv = saved.chariotLv;
   if (typeof saved.recruitOnly === 'boolean') ui.recruitOnly = saved.recruitOnly;
 } catch { /* ignore */ }
-const saveUi = () => { try { localStorage.setItem(UI_KEY, JSON.stringify({ route: ui.route, sort: ui.sort, withClass: ui.withClass, recruitOnly: ui.recruitOnly })); } catch { /* ignore */ } };
+const saveUi = () => { try { localStorage.setItem(UI_KEY, JSON.stringify({ route: ui.route, sort: ui.sort, withClass: ui.withClass, chariotLv: ui.chariotLv, recruitOnly: ui.recruitOnly })); } catch { /* ignore */ } };
 
 const f = { q: '', assign: 'all', route: '', quick: '', role: '', job: '', strength: '', weakness: '' };
 const PANEL_FILTERS = ['route', 'role', 'job', 'strength', 'weakness'];
@@ -1025,11 +1033,14 @@ addEventListener('popstate', () => { if (ui.drawer) closeDrawer(true); });
 
 function growthBlock(c, j, m) {
   const withJ = j && ui.withClass;
-  const times = j && j.id === CHARIOT ? 2 : 1;
-  return `<div class="block"><div class="block-head"><h3>성장률</h3>${j ? `<label class="toggle"><input type="checkbox" id="with-class"${ui.withClass ? ' checked' : ''}>${esc(j.name)}${m ? ` + ${esc(m.name)}${times > 1 ? '(×2)' : ''}` : ''} 보정 포함</label>` : ''}</div>
+  const chariot = j && j.id === CHARIOT;
+  const times = chariot ? 2 : 1;
+  const lvAdd = chariot ? CHARIOT_LEVELS[ui.chariotLv] : {};
+  return `<div class="block"><div class="block-head"><h3>성장률</h3>${j ? `<label class="toggle"><input type="checkbox" id="with-class"${ui.withClass ? ' checked' : ''}>${esc(j.name)}${chariot ? ` Lv${ui.chariotLv}` : ''}${m ? ` + ${esc(m.name)}${times > 1 ? '(×2)' : ''}` : ''} 보정 포함</label>` : ''}</div>
+    ${withJ && chariot ? `<div class="lv-row"><span>전차병의 길</span><div class="seg" role="group" aria-label="캐릭터 레벨">${Object.keys(CHARIOT_LEVELS).map(lv => `<button data-act="chariot-lv" data-lv="${lv}" aria-pressed="${ui.chariotLv === Number(lv)}">Lv ${lv}</button>`).join('')}</div></div>` : ''}
     <div class="growth">${C.STATS.map(([k, n]) => {
       const base = c.growth[k];
-      const add = withJ ? (j.growth[k] || 0) + (m ? (m.growth[k] || 0) * times : 0) : 0;
+      const add = withJ ? (j.growth[k] || 0) + (lvAdd[k] || 0) + (m ? (m.growth[k] || 0) * times : 0) : 0;
       const total = base == null ? null : base + add;
       const baseW = Math.max(0, Math.min(100, add < 0 ? total : base ?? 0));
       const addW = add > 0 ? Math.max(0, Math.min(100 - baseW, add)) : 0;
@@ -1491,6 +1502,7 @@ const A = {
     const p3 = isP3(ui.drawer.route) && d.mode === 'final';
     openModal({ kind: 'picker', mode: d.mode, q: '', tier: p3 && !drawerBuild()?.finalClass ? String(C.PART2_MAX_RANK + 1) : '', fit: false, open: drawerBuild()?.finalClass || null });
   },
+  'chariot-lv'(d) { ui.chariotLv = Number(d.lv); saveUi(); renderDrawer(); },
   'p3-squad'(d) { setSquad(ui.drawer.id, Number(d.squad)); },
   'p3-squad-row'(d) { setSquad(d.id, Number(d.squad)); },
   'p3-final'(d) { const b = getBuild(P3.id, d.id); if (b) setFinal(d.id, !b.final); },
