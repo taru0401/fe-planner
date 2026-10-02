@@ -32,6 +32,8 @@ for (const [a, b, stages, max, end] of globalThis.FE_SUPPORTS || []) {
   }
 }
 const RANK_ORDER = { S: 4, A: 3, B: 2, C: 1 };
+// Unlock requirements per pair ("idA|idB", sorted): { C|B|A: [support level, earliest part, note?] }.
+const SUPPORT_REQ = { pairs: {}, chars: {}, tips: [], ...globalThis.FE_SUPPORT_REQ };
 // Mounts exist only on the Kai route and in part 3. Chariot riders get double the growth bonus.
 const MOUNT_DATA = { mounts: [], classFamily: {}, ...globalThis.FE_MOUNTS };
 const MOUNTS = new Map(MOUNT_DATA.mounts.map(m => [m.id, m]));
@@ -98,7 +100,7 @@ if (!hadSaved && matchMedia('(prefers-color-scheme: dark)').matches) state.setti
 const ui = {
   route: 'dietrich', view: 'planner', pane: 'squad', sort: 'default',
   filtersOpen: false, compare: [], undo: null,
-  drawer: null, withClass: true, chariotLv: 25, recruitOnly: true, schedAll: false, modal: null, pendingImport: null, p3scope: 'all'
+  drawer: null, withClass: true, chariotLv: 25, recruitOnly: true, schedMode: 'recruit', modal: null, pendingImport: null, p3scope: 'all'
 };
 try {
   const saved = JSON.parse(localStorage.getItem(UI_KEY) || '{}');
@@ -106,9 +108,10 @@ try {
   if (SORTS.some(([k]) => k === saved.sort)) ui.sort = saved.sort;
   if (typeof saved.withClass === 'boolean') ui.withClass = saved.withClass;
   if (CHARIOT_LEVELS[saved.chariotLv]) ui.chariotLv = saved.chariotLv;
+  if (saved.schedMode === 'support') ui.schedMode = 'support';
   if (typeof saved.recruitOnly === 'boolean') ui.recruitOnly = saved.recruitOnly;
 } catch { /* ignore */ }
-const saveUi = () => { try { localStorage.setItem(UI_KEY, JSON.stringify({ route: ui.route, sort: ui.sort, withClass: ui.withClass, chariotLv: ui.chariotLv, recruitOnly: ui.recruitOnly })); } catch { /* ignore */ } };
+const saveUi = () => { try { localStorage.setItem(UI_KEY, JSON.stringify({ route: ui.route, sort: ui.sort, withClass: ui.withClass, chariotLv: ui.chariotLv, schedMode: ui.schedMode, recruitOnly: ui.recruitOnly })); } catch { /* ignore */ } };
 
 const f = { q: '', assign: 'all', route: '', quick: '', role: '', job: '', strength: '', weakness: '' };
 const PANEL_FILTERS = ['route', 'role', 'job', 'strength', 'weakness'];
@@ -871,17 +874,70 @@ function prepHtml(rows) {
     ${!total && !Object.keys(byType).length ? '<p class="note">따로 준비할 골드·아이템·부탁이 없습니다.</p>' : ''}
   </aside>`;
 }
+const schedSwitch = () => `<div class="seg" role="group" aria-label="보기"><button data-act="sched-mode" data-mode="recruit" aria-pressed="${ui.schedMode === 'recruit'}">영입</button><button data-act="sched-mode" data-mode="support" aria-pressed="${ui.schedMode === 'support'}">지원회화</button></div>`;
+const PART_LABEL = { '1': '1부부터', '2': '2부부터', '3': '3부부터' };
+// A note that blocks or limits this pair on the route being planned.
+function noteLevel(note, r) {
+  if (/카이 루트 불가/.test(note) && r === 'kai') return 'bad';
+  if (/디트리히 루트 한정/.test(note) && !isP3(r) && r !== 'dietrich') return 'bad';
+  return 'warn';
+}
+function supportPairCard(p, r) {
+  const req = SUPPORT_REQ.pairs[[p.a, p.id].sort().join('|')] || {};
+  const stages = (p.stages || '').split('→').filter(Boolean);
+  const name = id => `<button data-act="open" data-id="${id}">${avatar(chars.get(id))}<b>${e(chars.get(id).name)}</b></button>`;
+  const line = st => {
+    if (st === 'S') return `<li><span class="st">S</span><span>3부 주인공과 A 이후</span></li>`;
+    const q = req[st];
+    if (!q) return `<li><span class="st">${st}</span><span class="muted">조건 미확인</span></li>`;
+    const [lv, part, note] = q;
+    return `<li><span class="st">${st}</span><span>${lv ? `지원 Lv${lv}` : ''}${lv && part ? ' · ' : ''}${part ? `${part}부` : ''}${!lv && !part ? '<span class="muted">시기 미확인</span>' : ''}</span>${note ? `<em class="${noteLevel(note, r)}">${esc(note)}</em>` : ''}</li>`;
+  };
+  return `<article class="sched-card sup-card"><div class="sup-names">${name(p.a)}<i>↔</i>${name(p.id)}</div>
+    <ul class="sup-stages">${(stages.length ? stages : ['C', 'B', 'A'].filter(st => req[st])).map(line).join('') || '<li class="muted">단계 미확인</li>'}</ul>
+    ${p.end && p.end !== 'pending' && p.end !== 'candidate' ? `<span class="sup-end ${p.end}">${END_LABEL[p.end]}</span>` : ''}
+  </article>`;
+}
+function renderSupportSchedule(r) {
+  const ids = new Set(shown(r.id).map(b => b.characterId));
+  const pairs = [];
+  for (const id of ids) for (const p of partnersOf(id)) if (ids.has(p.id) && id < p.id) pairs.push({ a: id, ...p });
+  const reqOf = p => SUPPORT_REQ.pairs[[p.a, p.id].sort().join('|')] || {};
+  const first = p => { const q = reqOf(p); const st = ['C', 'B', 'A'].find(x => q[x]); return st ? q[st][1].charAt(0) : ''; };
+  const noted = p => Object.values(reqOf(p)).some(q => q[2]);
+  pairs.sort((x, y) => (first(x) || '9').localeCompare(first(y) || '9') || noted(y) - noted(x) || chars.get(x.a).name.localeCompare(chars.get(y.a).name, 'ko'));
+  const groups = [];
+  for (const p of pairs) {
+    const label = PART_LABEL[first(p)] || '시기 미확인';
+    if (groups.at(-1)?.label !== label) groups.push({ label, list: [] });
+    groups.at(-1).list.push(p);
+  }
+  // Same caution text for several members (e.g. the 티아라·피터르·울턴드 order) is shown once.
+  const cautions = new Map();
+  for (const id of ids) if (SUPPORT_REQ.chars[id]) (cautions.get(SUPPORT_REQ.chars[id]) || cautions.set(SUPPORT_REQ.chars[id], []).get(SUPPORT_REQ.chars[id])).push(chars.get(id));
+  const team = isP3(r.id) ? '3부 명단' : `${r.name} 부대`;
+  $('#schedule').innerHTML = `<div class="sched-top"><div><h2>${esc(isP3(r.id) ? '3부' : r.name)} 지원회화</h2><p class="col-sub">${esc(team)} ${ids.size}명 · 가능한 지원회화 ${pairs.length}쌍 · 주의사항 ${pairs.filter(noted).length}쌍</p></div>${schedSwitch()}</div>
+    <div class="sched-layout">
+      <div class="sched-main">${groups.length ? groups.map(g => `<section class="sched-group"><h3>${g.label}<small>${g.list.length}쌍</small></h3><div class="sched-grid">${g.list.map(p => supportPairCard(p, r.id)).join('')}</div></section>`).join('') : `<div class="squad-empty">${ids.size ? '이 부대 안에서 가능한 지원회화가 없습니다.' : '부대에 편성한 캐릭터가 없습니다.'}<button class="btn sm primary" data-act="view" data-view="planner">부대 편성으로</button></div>`}</div>
+      <aside class="panel prep"><h2>주의사항</h2>
+        ${cautions.size ? `<section class="prep-sec"><h3>캐릭터 <small>${cautions.size}</small></h3>${[...cautions].map(([text, list]) => `<div class="prep-row caution"><span class="who">${list.map(c => `<button data-act="open" data-id="${c.id}">${e(c.name)}</button>`).join('')}</span><span>${esc(text)}</span></div>`).join('')}</section>` : ''}
+        <section class="prep-sec"><h3>알아둘 점</h3>${SUPPORT_REQ.tips.map(t => `<p class="tip">${esc(t)}</p>`).join('')}</section>
+        <p class="note">지원 Lv은 지원 조건으로 필요한 지원 레벨, N부는 가장 이르게 볼 수 있는 시기입니다.</p>
+      </aside>
+    </div>`;
+}
 function renderSchedule() {
   const r = cur();
   const el = $('#schedule');
+  if (ui.schedMode === 'support') { renderSupportSchedule(r); return; }
   if (isP3(r.id)) {
     const leads = visibleChars().filter(c => c.sideStory);
-    el.innerHTML = `<div class="sched-top"><div><h2>3부 영입</h2><p class="col-sub">3부는 루트가 합쳐져 따로 스카우트하지 않습니다. 1부 외전 주인공은 외전을 클리어하면 3부에 합류합니다.</p></div></div>
+    el.innerHTML = `<div class="sched-top"><div><h2>3부 영입</h2><p class="col-sub">3부는 루트가 합쳐져 따로 스카우트하지 않습니다. 1부 외전 주인공은 외전을 클리어하면 3부에 합류합니다.</p></div>${schedSwitch()}</div>
       <div class="sched-grid">${leads.map(c => scheduleCard(c, recruitOn(c, P3.id), true)).join('')}</div>`;
     return;
   }
   const squadIds = new Set(shown(r.id).map(b => b.characterId));
-  const pool = ui.schedAll ? visibleChars().filter(c => squadIds.has(c.id) || recruitOn(c, r.id).ok) : [...squadIds].map(id => chars.get(id));
+  const pool = [...squadIds].map(id => chars.get(id));
   const rows = pool.map(c => ({ c, x: recruitOn(c, r.id) }));
   const rank = x => !x.ok ? 999 : x.part2 ? 500 : x.fame ?? 0;
   rows.sort((a, b) => rank(a.x) - rank(b.x) || (a.x.rec?.support ?? 0) - (b.x.rec?.support ?? 0));
@@ -893,8 +949,8 @@ function renderSchedule() {
     groups.at(-1).rows.push(row);
   }
   const scout = rows.filter(y => y.x.rec && !y.x.rec.auto).length;
-  el.innerHTML = `<div class="sched-top"><div><h2>${esc(r.name)} 영입 스케줄</h2><p class="col-sub">${ui.schedAll ? '영입 가능 전체' : '부대 편성'} ${rows.length}명 · 스토리 합류 ${rows.filter(y => y.x.rec?.auto && !y.x.part2).length}명 · 스카우트 ${scout}명</p></div>
-      <div class="seg" role="group" aria-label="범위"><button data-act="sched-all" data-val="0" aria-pressed="${!ui.schedAll}">부대 편성만</button><button data-act="sched-all" data-val="1" aria-pressed="${ui.schedAll}">영입 가능 전체</button></div></div>
+  el.innerHTML = `<div class="sched-top"><div><h2>${esc(r.name)} 영입 스케줄</h2><p class="col-sub">부대 편성 ${rows.length}명 · 스토리 합류 ${rows.filter(y => y.x.rec?.auto && !y.x.part2).length}명 · 스카우트 ${scout}명</p></div>
+      ${schedSwitch()}</div>
     <div class="sched-layout">
       <div class="sched-main">${groups.length ? groups.map(g => `<section class="sched-group"><h3>${g.label}<small>${g.rows.length}명</small></h3><div class="sched-grid">${g.rows.map(({ c, x }) => scheduleCard(c, x, squadIds.has(c.id))).join('')}</div></section>`).join('') : '<div class="squad-empty">부대에 편성한 캐릭터가 없습니다.<button class="btn sm primary" data-act="view" data-view="planner">부대 편성으로</button></div>'}</div>
       ${prepHtml(rows.filter(y => y.x.ok))}
@@ -1461,7 +1517,7 @@ const A = {
   'clear-compare'() { ui.compare = []; if (ui.modal?.kind === 'compare') closeModal(); renderList(); renderDrawer(); },
   assign(d) { f.assign = d.assign; renderList(); },
   quick(d) { f.quick = f.quick === d.quick ? '' : d.quick; renderList(); },
-  'sched-all'(d) { ui.schedAll = d.val === '1'; renderSchedule(); },
+  'sched-mode'(d) { ui.schedMode = d.mode; saveUi(); renderSchedule(); },
   'recruit-only'() { ui.recruitOnly = !ui.recruitOnly; saveUi(); renderList(); },
   'toggle-filters'() { ui.filtersOpen = !ui.filtersOpen; renderFilterPanel(); renderList(); },
   'reset-filters'() {
