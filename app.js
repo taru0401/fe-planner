@@ -1006,9 +1006,33 @@ function mountCard(m) {
       <dt>운용</dt><dd>${esc(m.use)}${m.note ? ` · <span class="muted">${esc(m.note)}</span>` : ''}</dd>
     </dl></article>`;
 }
+// Capture spots grouped by where you set out from, so one trip can catch several mounts.
+function capturePanel() {
+  const need = new Map();
+  for (const r of [MOUNT_ROUTE, P3.id]) for (const [id, list] of mountUsage(r).use) need.set(id, (need.get(id) || 0) + list.filter(x => x.source !== 'kai').length);
+  const chip = m => `<span class="cap-mount${need.get(m.id) ? ' need' : ''}"><b>${esc(m.name)}</b>${m.rarity.includes('희귀') ? '<i class="pill dup">희귀</i>' : ''}<small>${esc(m.food)}·${esc(m.taste)}</small>${need.get(m.id) ? `<em>필요 ${need.get(m.id)}</em>` : ''}</span>`;
+  const group = part => {
+    const by = new Map();
+    for (const m of MOUNT_DATA.mounts) for (const sp of m.spots || []) {
+      if (sp.part !== part) continue;
+      const from = sp.from || '다그시온 기준', key = `${sp.dir}|${sp.turns ?? ''}|${sp.note || ''}`;
+      if (!by.has(from)) by.set(from, new Map());
+      const spots = by.get(from);
+      if (!spots.has(key)) spots.set(key, { ...sp, list: [] });
+      spots.get(key).list.push(m);
+    }
+    return [...by].map(([from, spots]) => `<article class="cap-card"><h4>${esc(from)}</h4>${[...spots.values()].sort((a, b) => (a.turns ?? 99) - (b.turns ?? 99)).map(sp => `<div class="cap-spot"><span class="cap-where">${sp.turns ? `<b>${sp.turns}턴</b>` : ''}${esc(sp.dir)}${sp.note ? `<small>${esc(sp.note)}</small>` : ''}</span><div class="cap-list">${sp.list.map(chip).join('')}</div></div>`).join('')}</article>`).join('');
+  };
+  return `<section class="capture"><h3>포획 위치 <small>출발지에서 이동 턴 수 · 먹이 · 부대에 지정한 수</small></h3>
+    <h4 class="cap-part">1부부터</h4><div class="cap-grid">${group(1)}</div>
+    <h4 class="cap-part">3부 이후 <small>역·신전 재건 상황이 달라 방향만 표시</small></h4><div class="cap-grid">${group(3)}</div>
+    <p class="note">로시난·부케팔라스는 이오·알렉산드라와 함께 들어오고, 살라미스 전투 코끼리는 서브퀘스트 보상입니다(포획 불가). 출처: <a href="https://gall.dcinside.com/mgallery/board/view/?id=fireemblem&no=753281" target="_blank" rel="noopener">탈것 총정리 (파이어 엠블렘 마이너 갤러리)</a></p>
+  </section>`;
+}
 function renderMounts() {
   const fams = FAMILY_ORDER.map(f => [f, MOUNT_DATA.mounts.filter(m => m.family === f), Object.entries(MOUNT_DATA.classFamily).filter(([, x]) => x === f).map(([id]) => jobName(id))]);
   $('#mounts').innerHTML = `<div class="sched-top"><div><h2>탈것</h2><p class="col-sub">카이 루트와 3부에서만 탈 수 있습니다. 수치는 우호 Lv.5 기준이고, 전차병은 성장률 보정을 2배로 받습니다.</p></div></div>
+    ${capturePanel()}
     <div class="mount-layout">
       <div>${usagePanel('카이 루트 부대', MOUNT_ROUTE)}${usagePanel('3부 명단', P3.id)}${foodPanel()}</div>
       <div>${fams.map(([f, list, classes]) => `<section class="mount-fam"><h3>${esc(f)} <small>${esc(classes.join(' · '))}</small></h3><div class="mount-grid">${list.map(mountCard).join('')}</div></section>`).join('')}</div>
