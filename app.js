@@ -1238,7 +1238,9 @@ function buildBlock(c, d) {
         ${j ? `<button class="icon-btn" data-act="class-info" data-job="${j.id}" aria-label="${esc(j.name)} 병종 정보" title="병종 정보">${I.info}</button>` : ''}
       </div>
       ${j && !classAllowed(r.id, j) ? '<p class="hint warn">최상급직은 3부에서 열립니다. 3부 탭에서 지정하세요.</p>' : ''}
-      ${j && LATE_CLASSES.has(j.name) ? '<p class="hint">3부 중후반 서브퀘스트로 해금되는 병종입니다.</p>' : ''}</div>
+      ${j && LATE_CLASSES.has(j.name) ? '<p class="hint">3부 중후반 서브퀘스트로 해금되는 병종입니다.</p>' : ''}
+      ${j?.unlock ? `<p class="hint">${esc(j.unlock)}</p>` : ''}
+      ${j?.item && p3 ? (others => others.length ? `<p class="hint warn">${others.map(x => esc(chars.get(x.characterId).name)).join('·')}도 ${esc(j.name)}로 정했습니다. 신장직은 한 명만 될 수 있습니다.</p>` : '')(state.part3.filter(x => x.finalClass === j.id && x.characterId !== c.id)) : ''}</div>
     <div class="field"><span class="f-label">주무기${j && !j.weapons.length ? ' <small>무기 자료가 없어 전체 표시</small>' : ''}</span>${weaponChips(b, 'primary', allowed)}</div>
     <div class="field"><span class="f-label">보조무기</span>${weaponChips(b, 'secondary', allowed)}</div>
     <div class="field"><span class="f-label">이동 타입</span><div class="chips">${C.MOVEMENTS.map(x => `<button class="chip" data-act="movement" data-move="${x}" aria-pressed="${b.movement === x}">${x}</button>`).join('')}</div></div>
@@ -1355,7 +1357,7 @@ function classHtml() {
         <div class="fact"><span>적성</span>${esc(j.proficiencies.join(' · ') || '자료 없음')}</div>
       </div>
       ${classTable(j, c)}
-      <h3 class="sec-title">전직 조건</h3><p class="text-block">${esc(filled(j.requirements) || '없음')}${j.restrictions ? `\n${esc(j.restrictions)} 전용` : ''}</p>
+      <h3 class="sec-title">전직 조건</h3><p class="text-block">${esc(filled(j.requirements) || '없음')}${j.restrictions ? `\n${esc(j.restrictions)} 전용` : ''}${j.unlock ? `\n${esc(j.unlock)}` : ''}</p>
       <h3 class="sec-title">마스터 스킬</h3><p class="text-block">${esc(filled(j.master) || '자료 없음')}</p>
       ${j.skills.filter(filled).length ? `<h3 class="sec-title">병종 스킬</h3><p class="text-block">${esc(j.skills.filter(filled).join('\n'))}</p>` : ''}
     </div>
@@ -1402,7 +1404,7 @@ function renderPickerList() {
           <button class="job-main" data-act="job-expand" data-job="${j.id}" aria-expanded="${open}">${I.chev}<span><b>${esc(j.name)}</b>${LATE_CLASSES.has(j.name) ? '<em class="late">서브퀘스트 해금</em>' : ''}<span>${esc(j.movementType || '이동 미수록')} ${j.movement ?? ''} · ${esc(j.weapons.join(' · ') || '무기 자료 없음')}${j.restrictions ? ` · ${esc(j.restrictions)}` : ''}</span></span></button>
           <button class="btn sm${current ? '' : ' primary'}" data-act="pick" data-job="${j.id}"${current ? ' disabled' : ''}>${current ? '선택됨' : m.mode === 'final' ? '선택' : '추가'}</button>
         </div>
-        ${open ? `<div class="job-detail">${classTable(j, c)}<p><b>전직 조건</b> ${esc(filled(j.requirements) || '없음')}</p><p><b>마스터 스킬</b> ${esc(filled(j.master) || '자료 없음')}</p></div>` : ''}
+        ${open ? `<div class="job-detail">${classTable(j, c)}<p><b>전직 조건</b> ${esc(filled(j.requirements) || '없음')}${j.unlock ? ` · ${esc(j.unlock)}` : ''}</p><p><b>마스터 스킬</b> ${esc(filled(j.master) || '자료 없음')}</p></div>` : ''}
       </div>`;
     }).join('')}`;
   }).join('');
